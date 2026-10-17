@@ -204,8 +204,6 @@ pub(crate) mod thread_assert {
     }
 }
 struct Context {
-    audio_context: audio::AudioContext,
-
     screen_width: f32,
     screen_height: f32,
 
@@ -235,7 +233,6 @@ struct Context {
     camera_matrix: Option<Mat4>,
 
     ui_context: UiContext,
-    coroutines_context: experimental::coroutines::CoroutinesContext,
     fonts_storage: text::FontsStorage,
 
     pc_assets_folder: Option<String>,
@@ -383,9 +380,6 @@ impl Context {
             texture_batcher: texture::Batcher::new(&mut *ctx),
             camera_stack: vec![],
 
-            audio_context: audio::AudioContext::new(),
-            coroutines_context: experimental::coroutines::CoroutinesContext::new(),
-
             pc_assets_folder: None,
 
             start_time: ::miniquad::date::now(),
@@ -511,14 +505,53 @@ impl Context {
 #[no_mangle]
 static mut CONTEXT: Option<Context> = None;
 
-// This is required for #[macroquad::test]
-//
-// unfortunately #[cfg(test)] do not work with integration tests
-// so this module should be publicly available
+// Each native graphics test needs its own backend process: Miniquad intentionally
+// initializes its process-wide native display once. Never reset its globals.
 #[doc(hidden)]
 pub mod test {
-    pub static mut MUTEX: Option<std::sync::Mutex<()>> = None;
-    pub static ONCE: std::sync::Once = std::sync::Once::new();
+    /// Runs an attributed graphics test in a fresh harness process. The exact
+    /// child selection preserves grouped/parallel cargo test invocations.
+    pub fn run(full_name: &str, test: impl FnOnce()) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (full_name, test);
+            panic!("macroquad::test requires native process isolation; use finite WASM examples for browser tests");
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            const CHILD: &str = "MACROQUAD_TEST_CHILD";
+            let name = full_name
+                .split_once("::")
+                .map_or(full_name, |(_, name)| name);
+            let acknowledgement = format!("macroquad isolated test: {full_name}");
+            if std::env::var(CHILD).as_deref() == Ok(name) {
+                eprintln!("{acknowledgement}");
+                test();
+                return;
+            }
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("Test executable unavailable"),
+            )
+            .args([
+                "--exact",
+                name,
+                "--include-ignored",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, name)
+            .output()
+            .expect("Could not start isolated graphics test");
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stderr).contains(&acknowledgement),
+                "Isolated graphics test {name} failed ({}):\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 }
 
 fn get_context() -> &'static mut Context {
@@ -812,7 +845,7 @@ impl EventHandler for Stage {
                         ::miniquad::window::quit();
                         return;
                     }
-                    get_context().coroutines_context.update();
+                    experimental::coroutines::update(crate::time::get_frame_time() as f64);
                 }),
             );
 
@@ -854,7 +887,7 @@ impl EventHandler for Stage {
         let context = get_context();
 
         #[cfg(target_os = "android")]
-        context.audio_context.resume();
+        audio::resume();
         #[cfg(target_os = "android")]
         if ::miniquad::window::blocking_event_loop() {
             ::miniquad::window::schedule_update();
@@ -870,7 +903,7 @@ impl EventHandler for Stage {
         let context = get_context();
 
         #[cfg(target_os = "android")]
-        context.audio_context.pause();
+        audio::pause();
 
         // Clear held down keys and button and announce them as released
         context.mouse_released.extend(context.mouse_down.drain());
@@ -991,6 +1024,7 @@ impl Window {
                 draw_call_index_capacity,
             );
             unsafe { CONTEXT = Some(context) };
+            audio::init_sound();
 
             Box::new(Stage {
                 main_future: Box::pin(async {

@@ -30,7 +30,12 @@ jobs:
       - run: cargo +stable check --all-targets --no-default-features
       - run: cargo +stable check --all-targets --features audio
       - run: cargo +stable check --all-targets --target wasm32-unknown-unknown --features audio
-      - run: cargo +stable test --lib --no-default-features
+      - name: Link browser audio lifecycle fixture
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C link-arg=--allow-undefined"
+        run: cargo +stable build --example audio_lifecycle_regression --target wasm32-unknown-unknown --features audio
+      - name: Check lifecycle CPU paths and grouped graphics tests
+        run: xvfb-run -a cargo +stable test --tests --no-default-features
       - run: xvfb-run -a cargo +stable test --doc --no-default-features
       - name: Validate RGBA transfers and UI shader lifecycle on native GL
         run: |
@@ -51,7 +56,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install isolated interpreter toolchain
         run: rustup toolchain install nightly-2026-10-16 --profile minimal --component miri --component rust-src
-      - name: Check CPU buffers, representations and uniform bounds
+      - name: Check ownership, lifecycle, buffers and uniform bounds
         run: >-
           cargo +nightly-2026-10-16 miri test --lib --target ${{ matrix.target }}
-          -- texture::tests tobytes::tests quad_gl::uniform_tests
+          -- experimental::coroutines::tests audio::tests texture::tests tobytes::tests quad_gl::uniform_tests

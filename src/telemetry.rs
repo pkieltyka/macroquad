@@ -327,13 +327,13 @@ pub fn strings() -> Vec<String> {
     get_profiler().strings.clone()
 }
 
-/// Note that coroutines pre-allocate 56Kb, so 56000 as a result doesnt mean a leak
+/// Estimated scheduler entry storage, excluding boxed futures and result payloads.
 pub fn coroutines_allocated_memory() -> usize {
-    get_context().coroutines_context.allocated_memory()
+    crate::experimental::coroutines::allocated_memory()
 }
 
 pub fn active_coroutines_count() -> usize {
-    get_context().coroutines_context.active_coroutines_count()
+    crate::experimental::coroutines::active_coroutines_count()
 }
 
 pub fn capture_frame() {

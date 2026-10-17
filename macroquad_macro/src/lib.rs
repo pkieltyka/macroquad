@@ -213,18 +213,14 @@ pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     modified.extend(source);
 
     let mut prelude: TokenStream = format!(
-        "
+        r#"
     #[test]
     fn {test_name}() {{
-        let _lock = unsafe {{
-          let mutex = macroquad::test::ONCE.call_once(|| {{
-            macroquad::test::MUTEX = Some(std::sync::Mutex::new(()));
-          }});
-          macroquad::test::MUTEX.as_mut().unwrap().lock()
-        }};
-        macroquad::Window::new(\"test\", {test_name}_async());
+        macroquad::test::run(concat!(module_path!(), "::", stringify!({test_name})), || {{
+            macroquad::Window::new("test", {test_name}_async());
+        }});
     }}
-    ",
+    "#,
         test_name = test_name,
     )
     .parse()

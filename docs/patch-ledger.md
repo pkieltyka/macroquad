@@ -63,6 +63,35 @@ reconstruction check are in [vendor/README.md](../vendor/README.md).
 Zubspace arena/LVZ texture lifetimes and record separate camera/metadata/memory
 measurement work. No camera or atlas optimization is included.
 
+## Independent coroutine and audio lifetimes
+
+Adapt the audio-isolation direction in [#973](https://github.com/not-fl3/macroquad/pull/973),
+head `0e97981f8418c08f04f316e2b7e0c7dbe8c7ef42` by kampffrosch94
+`<kampffrosch94@github.com>`, rather than importing it as a complete soundness fix.
+The reviewed PR leaves broader ownership work unfinished. This fork gives audio
+and the scheduler independent thread-local owners. Sounds retain their source
+owner; final drop queues deletion without borrowing an already-borrowed backend.
+Polling, cancellation, result retrieval and future/result destruction release
+the scheduler borrow before running user code. Handles are thread-local;
+explicit cancellation also releases unclaimed completed results.
+
+Local additions cover non-reused task IDs, nested manual time and unwind,
+self-cancellation, destructor reentry, TLS shutdown, pending sound cancellation
+and decode failure. Native graphics tests use exact-selected subprocesses rather
+than resetting Miniquad's process-global display. The paired WASM runtime must
+provide `audio_source_state` extension v1 (`0` pending, `1` ready, `-1` failed,
+`-2` removed), preserve plugin ABI 1, and handle callback and Promise completion
+without resurrecting deleted sources. This is an intentional runtime pairing
+requirement, recorded by Zubspace's final import/provenance gate.
+
+Regression entry points are `experimental::coroutines::tests`, `audio::tests`,
+the grouped integration tests, and `examples/audio_lifecycle_regression.rs` with
+`tests/audio_lifecycle_regression.html`. CPU ownership helpers run under Miri
+on x86_64 and i686. The finite audio fixture checks genuine Chrome/Firefox
+WebAudio imports, failed decode, pending cancellation, clone/drop and unclaimed
+result cleanup. Graphics context, UI, telemetry and GPU resource ownership remain
+separate required work; this batch does not close RUSTSEC-2025-0035.
+
 ## Reviewed deferrals and rejections
 
 All candidates below were open and unmerged on 2026-10-16. Their diffs,
@@ -71,7 +100,6 @@ heads remain current later.
 
 | PR and reviewed head | Decision and concrete reason |
 | --- | --- |
-| [#973](https://github.com/not-fl3/macroquad/pull/973), `0e97981f8418c08f04f316e2b7e0c7dbe8c7ef42` | Defer import to the ownership batch. Isolating audio is useful, but its closures can borrow-panic on reentry; initialization, final-handle drop, cross-thread ownership, and asynchronous loads must fit the whole ownership design. The author confirms the wider context work was unfinished in the May 2026 discussion. |
 | [#1075](https://github.com/not-fl3/macroquad/pull/1075), `2d29112684ce7984e47b0c6096ed6d762d89ef96` | Defer. Browser loading progress is HTML (`src/assets/load/progress.rs`, WASM branch), and gameplay uses bitmap sprites. The native loader alone calls `draw_text`; no demonstrated browser atlas-upload benefit. |
 | [#1076](https://github.com/not-fl3/macroquad/pull/1076), `856a67bdc86468c39e689416114400ab9d89c756` | Defer. Browser loading progress is HTML and gameplay text is bitmap sprites, so neither establishes a need for font-atlas copying/growth optimization. Revisit only after a measured use case; image invariants are handled separately. |
 | [#1078](https://github.com/not-fl3/macroquad/pull/1078), `c09450ff3f94162d8ca6954b40f42d85aad7f0eb` | Defer with the atlas group. Edge padding changes glyph packing/growth/filtering. Browser loading progress is HTML and gameplay text is bitmap sprites; no applicable artifact reproduction justifies this change today. |

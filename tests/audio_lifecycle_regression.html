@@ -1,0 +1,54 @@
+<!doctype html>
+<canvas id="glcanvas" width="800" height="600" tabindex="1"></canvas>
+<script>
+window.evidence = { messages: [], errors: [], allocated: [], deleted: [], audioInitialized: false };
+for (const type of ["log", "info", "warn", "error"]) {
+    const original = console[type];
+    console[type] = (...args) => {
+        const message = args.join(" ");
+        if (message.includes("audio lifecycle regression: passed")) {
+            setTimeout(() => {
+                window.validateCompleted();
+                evidence.messages.push(message);
+            }, 500);
+        } else {
+            evidence.messages.push(message);
+        }
+        original.apply(console, args);
+    };
+}
+window.onerror = message => evidence.errors.push(String(message));
+window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
+(async () => {
+    const runtime = new URLSearchParams(location.search).get("runtime");
+    if (!runtime) throw new Error("Provide the paired runtime with ?runtime=/path/to/bundle.js");
+    await new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = runtime;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.append(script);
+    });
+    miniquad_add_plugin({ register_plugin: imports => {
+        const env = imports.env;
+        for (const name of ["audio_init", "audio_add_buffer", "audio_source_state", "audio_source_delete"]) {
+            if (typeof env[name] !== "function") throw new Error(`Missing genuine audio import ${name}`);
+        }
+        const init = env.audio_init;
+        env.audio_init = () => { init(); evidence.audioInitialized = true; };
+        const add = env.audio_add_buffer;
+        env.audio_add_buffer = (...args) => { const id = add(...args); evidence.allocated.push(id); return id; };
+        const remove = env.audio_source_delete;
+        env.audio_source_delete = id => { evidence.deleted.push(id); remove(id); };
+        window.validateCompleted = () => {
+            const allocated = [...evidence.allocated].sort((a, b) => a - b);
+            const deleted = [...evidence.deleted].sort((a, b) => a - b);
+            if (allocated.length !== 4 || JSON.stringify(allocated) !== JSON.stringify(deleted)) {
+                evidence.errors.push(`Unreleased/duplicate audio source: ${JSON.stringify({allocated, deleted})}`);
+            }
+            if (deleted.some(id => env.audio_source_state(id) !== -2)) evidence.errors.push("Deleted audio source was resurrected");
+        };
+    }});
+    load("/target/wasm32-unknown-unknown/debug/examples/audio_lifecycle_regression.wasm");
+})().catch(error => evidence.errors.push(String(error)));
+</script>

@@ -1,3 +1,29 @@
+# Macroquad for Zubspace
+
+This is `pkieltyka/macroquad`, a deliberately narrower fork of
+[Macroquad](https://github.com/not-fl3/macroquad) for Zubspace. It requires
+**Rust 1.88+** and supports **Linux X11/OpenGL** and **browser WASM/WebGL1/2**.
+Browser audio requires Zubspace's paired JavaScript runtime. The package version
+remains `0.4.16`; a crates.io `macroquad = "0.4"` dependency does not select this
+fork. Pin a reviewed full Git revision instead.
+
+The fork deliberately removes scene/storage/tween and raw backend APIs and uses
+scoped UI access. It is not a drop-in replacement across upstream platforms.
+Local remediation and regression evidence do not establish an official RustSec
+patched release, a clean dependency audit, or a measured performance improvement.
+
+- [Supported APIs, build matrix, updates and rollback](docs/fork.md)
+- [Security contracts and remaining boundaries](docs/security.md)
+- [Upstream remediation explanation](docs/upstream-remediation.md)
+- [Patch attribution and decisions](docs/patch-ledger.md)
+
+## Inherited upstream documentation
+
+The original project introduction and examples follow for background. Its
+platform list, crates.io installation, hosted JavaScript bundle and deployment
+instructions describe upstream Macroquad. Use the fork guide above for this
+checkout's support and dependency/runtime pairing requirements.
+
 # macroquad
 
 [![Github Actions](https://github.com/not-fl3/macroquad/workflows/CI/badge.svg)](https://github.com/not-fl3/macroquad/actions?query=workflow%3A)

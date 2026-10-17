@@ -1,9 +1,10 @@
 # Generated browser scene
 
-The public release browser job runs `tests/browser_scene/browser.py` in addition
-to the existing audio, ownership, UI, codec and texture/pass fixtures. It builds
+The full local release gate (`make test` or `make release-check`) runs
+`tests/browser_scene/browser.py` in addition to the existing audio, ownership,
+UI, codec and texture/pass fixtures. It builds
 release WASM and checks explicit WebGL1 and WebGL2 in Chrome and Firefox serially.
-The intended browser product remains independent of OS; these CI cells use Linux
+The intended browser product remains independent of OS; current validated cells use Linux
 and software graphics, not cross-OS or physical-GPU qualification.
 
 The scene is fixed at 640×480, DPR1, sample count1, seed `0x5eed0040` and a fixed
@@ -16,7 +17,7 @@ Firefox `layout.css.devPixelsPerPx=1.0` and `browser.display.os-zoom-behavior=0`
 and rejects any differing observed DPR. Firefox otherwise multiplies the
 requested scale by the OS text scale, as described in its
 [preference source](https://github.com/mozilla-firefox/firefox/blob/main/modules/libpref/init/StaticPrefList.yaml).
-The release display is explicitly 1280×960 at 96dpi; the scene requests an
+The local release display is explicitly 1280×960 at 96dpi; the scene requests an
 800×650 browser window and records the actual content viewport. It must fit the
 640×480 canvas completely.
 
@@ -55,7 +56,8 @@ The evidence contains raw samples, per-trial medians, actual GL version and
 renderer (unmasked when available), browser user agent, viewport, fixed workload,
 release profile/compiler/flags, lockfile/WASM/runtime hashes and a source-file
 inventory bound to Git HEAD and dirty state. A build/source guard rejects edits
-during the run. Final release CI records the exact committed source. Median
+during the run. Record local release evidence against the reviewed source;
+GitHub CI records its separate bounded graphics-smoke evidence. Median
 differences from these short software-renderer trials do not establish a game
 FPS improvement or isolated library regression. Assess a proposed optimization
 using repeated matched runs of the same workload/build/renderer/host conditions;
@@ -64,7 +66,7 @@ retain the raw observations and deferred-work limits.
 Run under the [release browser setup](fork.md#reproduce-the-fork-checks):
 
 ```sh
-xvfb-run -a -s "-screen 0 1280x960x24 -dpi 96" bash tests/browser_release.sh
+make test
 ```
 
 For the scene alone, start Openbox on the isolated display, then run
@@ -72,6 +74,8 @@ For the scene alone, start Openbox on the isolated display, then run
 `target/browser-scene/`; the release runner uses `target/browser-release/scene/`.
 Each cell also saves the first validated framebuffer as `scene.png` for inspection.
 No timing result is required to stay below a machine-dependent threshold.
+The GitHub graphics-smoke job does not run this scene or require an audio device.
+See [the command/coverage policy](../AGENTS.md) for the deliberate CI/local split.
 
 The workload was informed by read-only Zubspace source at
 `42bf0b68d358ef41a06b8e7a6b8190b87e418e0e`: per-label camera switches in

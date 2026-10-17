@@ -165,22 +165,37 @@ gh workflow run rust.yml --repo pkieltyka/macroquad --ref master
 
 Manual dispatch becomes available once this workflow is on the default branch;
 `--ref` selects the branch or tag to check. These events run the validation jobs.
-The primary release gate is the workflow's `browser` job. On Ubuntu 24.04 it
+The workflow's `browser` job is a bounded real-browser graphics smoke gate. It
+does not require an audio output device or run the comprehensive local suite.
+On Ubuntu 24.04 it
 provisions Chrome/ChromeDriver 155.0.8059.79, Firefox 158.0 and GeckoDriver 0.37.1
 through setup Actions pinned by commit, Node 22, stable Rust with the WASM target,
 Xvfb and Openbox. The serial runner records actual tool versions and artifact
-hashes beneath `target/browser-release/`; CI uploads its finite JSON/log evidence.
+hashes beneath `target/browser-smoke/`; CI uploads its finite JSON/log evidence.
 Chrome uses SwiftShader; Firefox runs on the isolated display with software GL.
 This is Linux-hosted library validation, not cross-OS or physical-GPU acceptance.
 
-With those browser/driver/display tools, Python 3.12+, Node 22+ and the WASM Rust
-target available locally, run the same gate from the fork root:
+The [Makefile](../Makefile) composes the commands actually used by CI. With those
+browser/driver/display tools, Python3.12+, Node22+, GNU Make, rustfmt and the
+WASM Rust target available locally, run from the fork root:
 
 ```sh
-xvfb-run -a -s "-screen 0 1280x960x24 -dpi 96" bash tests/browser_release.sh
+make build          # WASM no-audio/audio checks
+make test-ci        # Core checks, formatting, bounded browser smoke
+make test           # Core checks and comprehensive local browser suite
+make release-check  # Full local pre-release gate, including shared Rust checks
 ```
 
-It builds the finite WASM examples, checks genuine imports/ABIs, then runs
+`make test-ci` checks runtime regeneration/import contracts, negative/asset tests,
+vendoring, formatting and both WASM configurations. Its smoke helper builds only
+the small Miniquad texture/pass fixture: actual Chrome/Firefox Auto→2, forced
+fallback→1 and strict explicit1/2, plus both-unavailable/strict2-unavailable and
+old-runtime failures. Existing pixel/pass/depth, GL and texture/FBO cleanup
+assertions remain mandatory. `make browser-smoke` runs that bounded browser portion
+alone; `tests/browser_release.sh --smoke` is its underlying script mode.
+
+`make test` preserves the comprehensive local gate. It builds the finite WASM
+examples, checks genuine imports/ABIs, then runs
 audio resumption from a controlled suspended context after a trusted WebDriver
 gesture, decode/cancellation, graphics ownership, UI and codec fixtures in
 Chrome and Firefox. Those runtime fixtures use the new Auto default. The
@@ -192,11 +207,21 @@ created. Both WebGL paths remain supported. Audio evidence
 observes the actual decoding context's runtime `resume()` call and later running
 state; it does not qualify every browser autoplay-policy setting or audio device.
 
-The same browser job runs a [generated tile/sprite/bitmap-HUD scene](browser-scene.md)
+The full local gate also runs a [generated tile/sprite/bitmap-HUD scene](browser-scene.md)
 in explicit WebGL1/2. Its ordered camera-switch and screen-space-label variants
 must satisfy independent pixel witnesses and full-frame equivalence, with GL
 and texture cleanup checks. Repeated release-WASM CPU/cadence trials record
 diagnostics, not timing thresholds, GPU time or a game FPS improvement.
+
+Full evidence is in `target/browser-release/`. It requires a working browser
+audio output backend and retains actual running-state proof; a trusted click or
+successful decode alone cannot pass it. Missing tools/backends must be diagnosed,
+not converted to skipped success. Neither the full audio/lifecycle suite nor the
+scene timing matrix is an obligation of the lighter GitHub browser job. Before
+publication require full local evidence plus green public CI on the exact reviewed
+commit and final asset checks. [AGENTS.md](../AGENTS.md) records the coverage split,
+dependencies and process-cleanup rules. `make release-check` also runs the shared
+CPU/doctest/backend checks below; CI's separate MSRV/Miri jobs remain required.
 
 The existing native, MSRV and Miri jobs provide supporting shared-Rust/backend
 correctness evidence. For those checks install Linux X11/GL development libraries,

@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   browser:
-    name: Browser WASM WebGL1/2 (Chrome and Firefox)
+    name: Browser graphics smoke (Chrome and Firefox)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -44,23 +44,22 @@ jobs:
         with:
           geckodriver-version: 0.37.1
           token: ${{ github.token }}
-      - name: Run finite browser graphics and audio release gates serially
+      - name: Run bounded browser graphics smoke serially
         env:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
           CHROMEDRIVER_BIN: ${{ steps.chrome.outputs.chromedriver-path }}
           FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
-        run: xvfb-run -a -s "-screen 0 1280x960x24 -dpi 96" bash tests/browser_release.sh
-      - name: Preserve finite browser evidence
+        run: make browser-smoke
+      - name: Preserve browser smoke evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-release-evidence
+          name: browser-smoke-evidence
           path: |
-            target/browser-release/**/*.json
-            target/browser-release/**/*.log
-            target/browser-release/scene/**/*.png
-            target/browser-release/environment.txt
-            target/browser-release/checksums.sha256
+            target/browser-smoke/**/*.json
+            target/browser-smoke/**/*.log
+            target/browser-smoke/environment.txt
+            target/browser-smoke/checksums.sha256
           if-no-files-found: warn
 
   supported:
@@ -71,15 +70,7 @@ jobs:
         with:
           node-version: 22
       - name: Verify paired runtime and release asset generation
-        run: |
-          node tools/regenerate_browser_runtime.mjs --check
-          node --test tests/browser_runtime.test.mjs
-          node --test tests/audio_unlock_gate.test.mjs
-          node --test tests/webgl_selection.test.mjs
-          node --test tests/browser_scene/oracle.test.mjs
-          python3 tests/test_browser_audio_gate.py
-          python3 tests/browser_scene/test_protocol.py
-          python3 tests/test_prepare_release.py
+        run: make check-runtime
       - name: Install native graphics and audio dependencies
         run: |
           sudo apt-get update
@@ -89,20 +80,17 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt
           rustup target add --toolchain stable wasm32-unknown-unknown
       - name: Format fork code and patched backend files
-        run: |
-          for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml tests/browser_scene/Cargo.toml; do
-            cargo +stable fmt --manifest-path "$manifest" -- --check
-          done
-          rustfmt +stable --edition 2018 --check vendor/miniquad/src/conf.rs vendor/miniquad/src/native/wasm.rs vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs vendor/miniquad/src/native/linux_x11/clipboard.rs vendor/miniquad/src/native/linux_x11/drag_n_drop.rs
+        run: make check-format CARGO='cargo +stable' RUSTFMT='rustfmt +stable'
       - name: Verify the published backend source and narrow patch
-        run: python3 tools/vendor_miniquad.py
+        run: make check-vendor
       - name: Check backend cache and property boundaries
         run: CARGO_TARGET_DIR=target/miniquad-tests cargo +stable test --manifest-path vendor/miniquad/Cargo.toml --locked --lib
       - name: Check real X11 properties and clipboard self-selection
         run: CARGO_TARGET_DIR=target/miniquad-tests xvfb-run -a cargo +stable test --manifest-path vendor/miniquad/Cargo.toml --locked --lib live_x11_ -- --ignored
       - run: cargo +stable check --all-targets --no-default-features
       - run: cargo +stable check --all-targets --features audio
-      - run: cargo +stable check --all-targets --target wasm32-unknown-unknown --features audio
+      - name: Check both supported WASM feature configurations
+        run: make build CARGO='cargo +stable'
       - name: Link browser lifecycle fixtures
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C link-arg=--allow-undefined"

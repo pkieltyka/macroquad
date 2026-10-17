@@ -56,17 +56,23 @@ mobile acceptance are not established by those runs. Linux X11/OpenGL without
 default features or with optional audio remains a secondary development/test
 path. Other native backends are outside the current native support matrix.
 Finite regressions validate library behavior; hardware audio/GPU coverage is limited.
-The public release workflow includes a serial real-browser WASM job for
-Chrome/Firefox: audio, ownership, UI and codecs using Auto, plus texture/pass
-regressions for Auto→2, forced fallback→1 and strict explicit1/2. Both-unavailable,
+The public workflow includes bounded serial real-browser graphics smoke for
+Chrome/Firefox: texture/pass regressions for Auto→2, forced fallback→1 and strict
+explicit1/2. Both-unavailable,
 strict2-unavailable and old-runtime cells must fail clearly before GPU allocation.
-The same job checks a self-contained generated tile/sprite/bitmap-HUD scene in
+The comprehensive local pre-release gate retains strict actual audio resumption,
+lifecycle, ownership, UI and codecs using Auto. It also checks a self-contained
+generated tile/sprite/bitmap-HUD scene in
 explicit WebGL1/2: camera-switch and screen-space-label variants must have
 equivalent pixels, correct independent landmarks and clean GL/resource behavior.
 Three matched release-WASM trials record CPU issuance and RAF cadence; timing
 is diagnostic, GPU duration is unavailable and no performance gain is claimed.
 Native/MSRV/Miri checks support shared-code correctness. This does not claim
 new cross-OS, Safari/mobile or game acceptance.
+`AGENTS.md` and the Makefile provide `make build`, `make test-ci`, `make test` and
+`make release-check` with explicit prerequisites/coverage. CI smoke success does
+not claim full local audio or scene timing acceptance; both local release evidence
+and exact-source public CI are required before publication.
 GPU timing and graphics-context restoration are unavailable.
 The source's `docs/browser-roadmap.md` records pending post-0.5.0 browser
 qualification and robustness work; this release does not claim those outcomes.

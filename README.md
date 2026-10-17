@@ -12,8 +12,11 @@ Building the Rust code requires **Rust 1.88+**.
 Current browser fixtures run on Linux with Chrome and Firefox; they do not
 establish testing across every OS, device or GPU, or Safari/mobile acceptance.
 Native Linux X11/OpenGL is a secondary development and test path.
-The release workflow includes real Chrome/Firefox WASM fixtures, with explicit
-WebGL1 and WebGL2 graphics coverage, alongside shared Rust correctness checks.
+GitHub CI includes bounded real Chrome/Firefox WebGL1/2 and Auto/fallback graphics
+smoke, alongside shared Rust correctness checks. Comprehensive browser/audio and
+visual timing checks run locally between releases. Use `make build`, `make test-ci`,
+`make test` or `make release-check`; [AGENTS.md](AGENTS.md) describes prerequisites,
+coverage and evidence.
 Release **0.5.0** is distributed through [GitHub releases](https://github.com/pkieltyka/macroquad/releases/tag/zubspace-v0.5.0),
 with its matching fork-owned JavaScript runtime included in this source tree and
 as a release asset. Consumers do not need private Zubspace runtime files.

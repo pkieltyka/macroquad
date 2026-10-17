@@ -323,6 +323,11 @@ regressions. Miri is pinned to nightly-2026-10-16 for x86_64 and i686, covering
 32-bit slice/metadata overflow as well as representation and buffer mutation.
 The PNG codec integration test runs natively and is skipped only by Miri; its
 dimension-check helper still runs under both interpreter targets.
+The browser CI job deliberately runs bounded real Chrome/Firefox graphics smoke
+with explicit WebGL1/2, Auto/fallback and pixel/GL/resource gates. Comprehensive
+audio/lifecycle/visual/scene timing validation remains the strict local release
+gate documented in [AGENTS.md](../AGENTS.md); CI success alone does not establish
+those local outcomes or a functioning audio device.
 
 Lifecycle CPU/Miri entry points are `experimental::coroutines::tests` and
 `audio::tests` (the instrumented no-audio backend exercises the actual owner,

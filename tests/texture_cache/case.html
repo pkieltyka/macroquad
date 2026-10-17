@@ -2,7 +2,36 @@
 <meta charset="utf-8">
 <canvas id="glcanvas" width="64" height="64" tabindex="1"></canvas>
 <script>
-window.evidence = { messages: [], errors: [], staleBindings: 0, version: null, completed: false };
+window.evidence = { messages: [], errors: [], staleBindings: 0, version: null, requestedMode: null, completed: false,
+    requests: [], startupError: null, createdTextures: 0, liveTextures: 0, createdFramebuffers: 0, liveFramebuffers: 0 };
+const parameters = new URLSearchParams(location.search);
+const nativeGetContext = HTMLCanvasElement.prototype.getContext;
+const observedContexts = new Set();
+HTMLCanvasElement.prototype.getContext = function (name, ...args) {
+    if (name !== "webgl" && name !== "webgl2") return nativeGetContext.call(this, name, ...args);
+    evidence.requests.push(name);
+    const blocked = parameters.get("block");
+    if (blocked === "all" || (blocked === "webgl2" && name === "webgl2")) return null;
+    const context = nativeGetContext.call(this, name, ...args);
+    if (context && !observedContexts.has(context)) {
+        observedContexts.add(context);
+        for (const [kind, created, live] of [["Texture", "createdTextures", "liveTextures"], ["Framebuffer", "createdFramebuffers", "liveFramebuffers"]]) {
+            const objects = new Set();
+            const create = context[`create${kind}`].bind(context), remove = context[`delete${kind}`].bind(context);
+            context[`create${kind}`] = (...values) => {
+                const object = create(...values);
+                if (object) { objects.add(object); evidence[created]++; evidence[live] = objects.size; }
+                return object;
+            };
+            context[`delete${kind}`] = object => {
+                if (object && !objects.delete(object)) evidence.errors.push(`Duplicate/unowned ${kind} deletion`);
+                evidence[live] = objects.size;
+                return remove(object);
+            };
+        }
+    }
+    return context;
+};
 for (const level of ["log", "info", "warn", "error"]) {
     const original = console[level];
     console[level] = (...args) => {
@@ -35,15 +64,22 @@ importObject.env.glBindTexture = (target, id) => {
 };
 const originalInit = importObject.env.init_webgl;
 importObject.env.init_webgl = version => {
-    originalInit(version);
+    evidence.requestedMode = version;
+    try { originalInit(version); }
+    catch (error) { evidence.startupError = String(error); throw error; }
     evidence.version = gl instanceof WebGL2RenderingContext ? 2 : 1;
     evidence.renderer = gl.getParameter(gl.RENDERER);
+    evidence.glVersion = gl.getParameter(gl.VERSION);
 };
 // Missing imports make this fixture fail; permissive fallback stubs cannot pass it.
 add_missing_functions_stabs = module => {
     const missing = WebAssembly.Module.imports(module).filter(item =>
         !(item.name in (importObject[item.module] || {})));
-    if (missing.length) throw new Error(`Missing imports: ${JSON.stringify(missing)}`);
+    if (missing.length) {
+        const error = new Error(`Missing imports: ${missing.map(item => `${item.module}.${item.name}`).join(", ")}`);
+        evidence.startupError = String(error);
+        throw error;
+    }
 };
 load(new URLSearchParams(location.search).get("wasm"));
 })().catch(error => evidence.errors.push(String(error)));

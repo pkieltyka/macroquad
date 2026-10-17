@@ -6,12 +6,20 @@ import vm from "node:vm";
 
 export const sha256 = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 
-export function regenerateBundle(base) {
+export function regenerateBundle(base, glSource = fs.readFileSync(new URL("../vendor/miniquad/js/gl.js", import.meta.url), "utf8")) {
   let bundle = base;
   const replace = (name, before, after) => {
     assert.equal(bundle.split(before).length - 1, 1, `${name}: upstream anchor must occur exactly once`);
     bundle = bundle.replace(before, after);
   };
+  const start = glSource.indexOf("function init_webgl(version) {");
+  const end = glSource.indexOf("\ncanvas.focus();", start);
+  assert.ok(start >= 0 && end > start, "vendored WebGL initializer is missing");
+  const oldStart = base.indexOf("function init_webgl(e){");
+  const oldEnd = base.indexOf("canvas.focus()", oldStart);
+  assert.ok(oldStart >= 0 && oldEnd > oldStart, "upstream WebGL initializer is missing");
+  replace("WebGL context selection", base.slice(oldStart, oldEnd), glSource.slice(start, end));
+  replace("WebGL selection extension", "init_webgl}};", "init_webgl,webgl_selection_version:function(){return 1;}}};");
   replace("fallback canvas", 'document.querySelector("#glcanvas");',
     'document.querySelector("#glcanvas")||(()=>{const e=document.createElement("canvas");return e.id="glcanvas",e.tabIndex=1,(document.body||document.documentElement).appendChild(e),e})();');
   replace("bounded download copy",
@@ -46,7 +54,11 @@ export function runtimeSources(repoRoot, assetRoot = repoRoot) {
   const base = fs.readFileSync(path.join(repoRoot, metadata.base.bundlePath), "utf8");
   assert.equal(sha256(base), metadata.base.bundleSha256, "upstream browser runtime checksum changed");
   const bundle = fs.readFileSync(path.join(assetRoot, "js/mq_js_bundle.js"), "utf8");
-  assert.equal(bundle, regenerateBundle(base), "browser runtime is not reproducible; run node tools/regenerate_browser_runtime.mjs");
+  const selection = metadata.extensions.fork_webgl_selection;
+  assert.equal(selection.version, 1, "unsupported WebGL selection extension");
+  const glSource = fs.readFileSync(path.join(repoRoot, selection.sourcePath), "utf8");
+  assert.equal(sha256(glSource), selection.sourceSha256, "vendored WebGL runtime source checksum changed");
+  assert.equal(bundle, regenerateBundle(base, glSource), "browser runtime is not reproducible; run node tools/regenerate_browser_runtime.mjs");
   assert.equal(sha256(bundle), metadata.bundleSha256, "generated browser runtime checksum changed");
   return { metadata, bundle };
 }
@@ -90,6 +102,8 @@ export function validateWasmContract(module, runtime, abi, requireAudio = true) 
   const plugins = Object.fromEntries(runtime.plugins.map((plugin) => [plugin.name, plugin.version]));
   assert.deepEqual(plugins, abi.plugins, "browser plugin names/versions differ from the runtime contract");
   assert.equal(vm.runInContext("version", runtime), abi.miniquad, "Miniquad browser ABI mismatch");
+  assert.equal(typeof runtime.importObject.env.webgl_selection_version, "function", "WebGL selection extension missing");
+  assert.equal(runtime.importObject.env.webgl_selection_version(), abi.webglSelection, "WebGL selection extension version mismatch");
   // Rust has no WASM start function here. Instantiate without running main and
   // invoke only the constant ABI exports; no graphics/audio/RTC imports run.
   const instance = new WebAssembly.Instance(module, runtime.importObject);
@@ -110,6 +124,9 @@ export function checkBrowserRuntime(repoRoot, wasmPath, requireAudio = true) {
   const module = new WebAssembly.Module(fs.readFileSync(wasmPath));
   const runtime = createRuntime(sources);
   const contract = validateWasmContract(module, runtime, sources.metadata.abi, requireAudio);
+  assert.equal(sources.metadata.extensions.fork_webgl_selection.requiredByCurrentRust, true, "fork requires the WebGL selection extension");
+  assert.ok(WebAssembly.Module.imports(module).some((entry) => entry.module === "env" && entry.name === "webgl_selection_version"),
+    "paired fork must import runtime extension: webgl_selection_version");
   const extension = sources.metadata.extensions.zubspace_audio_source_state;
   assert.equal(extension.version, 1, "unsupported audio state extension version");
   assert.equal(extension.requiredByCurrentRust, true, "fork requires the audio state extension");

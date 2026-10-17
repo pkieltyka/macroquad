@@ -94,10 +94,13 @@ pub enum AppleGfxApi {
 /// - Do raw WebGL2 OpenGL calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WebGLVersion {
-    /// Use WebGL 1.0. This is the default choice.
+    /// Prefer WebGL 2.0; fall back to WebGL 1.0 only if context creation fails.
+    /// Requires the fork's paired JavaScript selection extension v1.
     #[default]
+    Auto,
+    /// Require WebGL 1.0 without trying WebGL 2.0.
     WebGL1,
-    /// Use WebGL 2.0.
+    /// Require WebGL 2.0 without falling back to WebGL 1.0.
     WebGL2,
 }
 
@@ -126,7 +129,7 @@ pub struct Platform {
     /// Specifies which Linux window system (X11 or Wayland) is preferred or used.
     pub linux_backend: LinuxBackend,
 
-    /// Specifies which WebGL version to use on the Web (1.0. or 2.0).
+    /// Specifies automatic selection or a required WebGL version on the Web.
     pub webgl_version: WebGLVersion,
 
     /// Defines which rendering API to use on Apple platforms (Metal or OpenGL).

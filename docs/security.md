@@ -14,6 +14,14 @@ other native OS targets before entering Miniquad; these native guards do not
 restrict the OS hosting a browser WASM build. Companion crates remain build
 targets but are not independently release-supported.
 
+Browser context selection defaults to Auto (WebGL2 first, WebGL1 only on
+context-creation failure), with strict explicit1/2 requests. The current Rust
+requires `webgl_selection_version` extension v1 before context/GPU setup;
+legacy Miniquad ABI2 and audio ABI1 remain unchanged. Missing/unsupported
+selection contracts and unavailable contexts fail rather than fabricating
+capabilities. The owned GL version and MSAA/format capabilities come from the
+actual context, including fallback1. See [selection and pairing](fork.md#webgl-selection).
+
 The tested source revision is
 [`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271`](https://github.com/pkieltyka/macroquad/tree/ea02ddd91439fb1c5024f0dc062c6a04b1f3d271),
 published on `zubspace-reviewed-ea02ddd`. Its scoped ownership and buffer

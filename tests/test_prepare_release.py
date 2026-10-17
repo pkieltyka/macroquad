@@ -21,7 +21,8 @@ class ReleaseAssets(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="macroquad-release-test-")
         self.root = Path(self.temp.name)
         for name in ["Cargo.toml", "LICENSE-MIT", "LICENSE-APACHE", "js", "tools",
-                     "vendor/browser-runtime", "vendor/miniquad.patch", "docs/browser-runtime.md",
+                     "vendor/browser-runtime", "vendor/miniquad.patch", "vendor/miniquad/js/gl.js",
+                     "vendor/miniquad/LICENSE-MIT", "vendor/miniquad/LICENSE-APACHE", "docs/browser-runtime.md",
                      "docs/releases/zubspace-v0.5.0.md"]:
             source, destination = ROOT / name, self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -30,7 +31,7 @@ class ReleaseAssets(unittest.TestCase):
             else:
                 shutil.copyfile(source, destination)
         # Only the tree identity is needed here; actual vendoring has its own gate.
-        (self.root / "vendor/miniquad").mkdir()
+        (self.root / "vendor/miniquad").mkdir(exist_ok=True)
         (self.root / "vendor/miniquad/fixture").write_text("source identity fixture\n")
         (self.root / ".gitignore").write_text("/target\n__pycache__/\n")
         self.git("init", "-q")

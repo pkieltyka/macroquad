@@ -73,6 +73,7 @@ def prepare(root, output, preview=False):
     paths = [
         "js/mq_js_bundle.js", "js/mq_js_bundle.provenance.json", "js/README.md",
         "vendor/browser-runtime/macroquad-0.4.16.js", "vendor/browser-runtime/LICENSE-MIT",
+        "vendor/miniquad/js/gl.js", "vendor/miniquad/LICENSE-MIT", "vendor/miniquad/LICENSE-APACHE",
         "tools/browser_runtime.mjs", "tools/regenerate_browser_runtime.mjs",
         "tools/check_browser_runtime.mjs", "docs/browser-runtime.md", "LICENSE-MIT", "LICENSE-APACHE",
     ]

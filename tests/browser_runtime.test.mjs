@@ -20,6 +20,7 @@ const uint = (value) => value < 128 ? [value] : [(value & 127) | 128, ...uint(va
 const text = (value) => [...uint(Buffer.byteLength(value)), ...Buffer.from(value)];
 const section = (id, bytes) => [id, ...uint(bytes.length), ...bytes];
 function wasm({ imports = [], miniquad = 2, audio = 1, audioExport = true, returnBytes = false } = {}) {
+  imports = [["env", "webgl_selection_version"], ...imports];
   const exports = [["crate_version", miniquad], ...(audioExport ? [["macroquad_audio_crate_version", audio]] : [])];
   const code = exports.flatMap(([, value]) => {
     const body = [0, 0x41, value, 0x0b];
@@ -297,10 +298,20 @@ test("WASM checker requires the audio extension and permits explicit noaudio fix
     fs.writeFileSync(file, wasm({ returnBytes: true }));
     assert.throws(() => checkBrowserRuntime(root, file), /must import runtime extension/);
     fs.writeFileSync(file, wasm({ audioExport: false, returnBytes: true }));
-    assert.equal(checkBrowserRuntime(root, file, false).imports, 0);
+    assert.equal(checkBrowserRuntime(root, file, false).imports, 1);
     fs.writeFileSync(file, wasm({ imports: [["env", "audio_source_state"]], returnBytes: true }));
-    assert.equal(checkBrowserRuntime(root, file).imports, 1);
+    assert.equal(checkBrowserRuntime(root, file).imports, 2);
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+test("the previous paired runtime is rejected before its loader can stub the selection extension", () => {
+  const oldBundle = fs.readFileSync(new URL("fixtures/mq_js_bundle-pre-auto.js", import.meta.url), "utf8");
+  assert.equal(sha256(oldBundle), "c4cc9799355e046d0fef61e1078e5524b08e0516fb914246b9808c0d80d367e9");
+  const oldRuntime = createRuntime({ bundle: oldBundle });
+  assert.throws(() => validateWasmContract(wasm(), oldRuntime, sources.metadata.abi), /missing WASM import implementation: env.webgl_selection_version/);
+  const runtime = createRuntime(sources);
+  runtime.importObject.env.webgl_selection_version = () => 2;
+  assert.throws(() => validateWasmContract(wasm(), runtime, sources.metadata.abi), /selection extension version mismatch/);
 });

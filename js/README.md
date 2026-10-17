@@ -5,6 +5,10 @@
 It is generated from the published upstream **0.4.16** aggregate plus the
 reviewed local fixes, including `audio_source_state` extension v1. Miniquad's
 Rust dependency remains the locally patched **0.4.11** source.
+The initializer is taken from `vendor/miniquad/js/gl.js`, with an additive
+`webgl_selection_version` extension v1. Auto (mode 0) tries WebGL2 then WebGL1
+only on context-creation failure; explicit modes 1/2 are strict. Old runtime
+bundles without the extension are rejected before context creation.
 
 With Node.js 22+ from this checkout (no network or minifier required):
 

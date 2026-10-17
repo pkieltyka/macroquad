@@ -1,3 +1,113 @@
+--- a/js/gl.js
++++ b/js/gl.js
+@@ -25,8 +25,28 @@
+ var blocking_event_loop = false;
+
+ function init_webgl(version) {
++    if (version !== 0 && version !== 1 && version !== 2) {
++        throw new RangeError("Unsupported WebGL request: " + version);
++    }
++    function createContext(name) {
++        try {
++            return canvas.getContext(name);
++        } catch (error) {
++            return null;
++        }
++    }
++    gl = null;
++    const automatic = version === 0;
++    if (automatic) {
++        gl = createContext("webgl2");
++        if (gl !== null) return;
++        version = 1;
++    }
+     if (version == 1) {
+-        gl = canvas.getContext("webgl");
++        gl = createContext("webgl");
++        if (gl === null) {
++            throw new Error(automatic ? "Unable to initialize WebGL2 or WebGL1" : "Unable to initialize required WebGL1");
++        }
+
+         function acquireVertexArrayObjectExtension(ctx) {
+             // Extension available in WebGL 1 from Firefox 25 and WebKit 536.28/desktop Safari 6.0.3 onwards. Core feature in WebGL 2.
+@@ -88,10 +108,8 @@
+             alert("Cant initialize WEBGL_depth_texture extension");
+         }
+     } else {
+-        gl = canvas.getContext("webgl2");
+-    }
+-    if (gl === null) {
+-        alert("Unable to initialize WebGL. Your browser or machine may not support it.");
++        gl = createContext("webgl2");
++        if (gl === null) throw new Error("Unable to initialize required WebGL2");
+     }
+ }
+
+@@ -1458,7 +1476,8 @@
+             }
+             animation_frame_timeout = window.requestAnimationFrame(animation);
+         },
+-        init_webgl
++        init_webgl,
++        webgl_selection_version: function () { return 1; }
+     }
+ };
+
+--- a/src/conf.rs
++++ b/src/conf.rs
+@@ -94,10 +94,13 @@
+ /// - Do raw WebGL2 OpenGL calls.
+ #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+ pub enum WebGLVersion {
+-    /// Use WebGL 1.0. This is the default choice.
+-    #[default]
++    /// Prefer WebGL 2.0; fall back to WebGL 1.0 only if context creation fails.
++    /// Requires the fork's paired JavaScript selection extension v1.
++    #[default]
++    Auto,
++    /// Require WebGL 1.0 without trying WebGL 2.0.
+     WebGL1,
+-    /// Use WebGL 2.0.
++    /// Require WebGL 2.0 without falling back to WebGL 1.0.
+     WebGL2,
+ }
+
+@@ -126,7 +129,7 @@
+     /// Specifies which Linux window system (X11 or Wayland) is preferred or used.
+     pub linux_backend: LinuxBackend,
+
+-    /// Specifies which WebGL version to use on the Web (1.0. or 2.0).
++    /// Specifies automatic selection or a required WebGL version on the Web.
+     pub webgl_version: WebGLVersion,
+
+     /// Defines which rendering API to use on Apple platforms (Metal or OpenGL).
+--- a/src/native/wasm.rs
++++ b/src/native/wasm.rs
+@@ -66,10 +66,16 @@
+     }
+
+     let version = match conf.platform.webgl_version {
++        crate::conf::WebGLVersion::Auto => 0,
+         crate::conf::WebGLVersion::WebGL1 => 1,
+         crate::conf::WebGLVersion::WebGL2 => 2,
+     };
+     unsafe {
++        assert_eq!(
++            webgl_selection_version(),
++            1,
++            "This fork requires the paired WebGL selection extension v1"
++        );
+         init_webgl(version);
+     }
+
+@@ -138,6 +144,7 @@
+     pub fn sapp_set_window_size(new_width: u32, new_height: u32);
+     pub fn sapp_schedule_update();
+     pub fn init_webgl(version: i32);
++    pub fn webgl_selection_version() -> u32;
+     pub fn now() -> f64;
+ }
+
 --- a/src/graphics/gl.rs
 +++ b/src/graphics/gl.rs
 @@ -72,6 +72,18 @@

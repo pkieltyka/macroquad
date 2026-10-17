@@ -66,10 +66,16 @@ where
     }
 
     let version = match conf.platform.webgl_version {
+        crate::conf::WebGLVersion::Auto => 0,
         crate::conf::WebGLVersion::WebGL1 => 1,
         crate::conf::WebGLVersion::WebGL2 => 2,
     };
     unsafe {
+        assert_eq!(
+            webgl_selection_version(),
+            1,
+            "This fork requires the paired WebGL selection extension v1"
+        );
         init_webgl(version);
     }
 
@@ -138,6 +144,7 @@ extern "C" {
     pub fn sapp_set_window_size(new_width: u32, new_height: u32);
     pub fn sapp_schedule_update();
     pub fn init_webgl(version: i32);
+    pub fn webgl_selection_version() -> u32;
     pub fn now() -> f64;
 }
 

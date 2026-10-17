@@ -74,6 +74,7 @@ jobs:
           node tools/regenerate_browser_runtime.mjs --check
           node --test tests/browser_runtime.test.mjs
           node --test tests/audio_unlock_gate.test.mjs
+          node --test tests/webgl_selection.test.mjs
           python3 tests/test_browser_audio_gate.py
           python3 tests/test_prepare_release.py
       - name: Install native graphics and audio dependencies
@@ -89,7 +90,7 @@ jobs:
           for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml; do
             cargo +stable fmt --manifest-path "$manifest" -- --check
           done
-          rustfmt +stable --edition 2018 --check vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs vendor/miniquad/src/native/linux_x11/clipboard.rs vendor/miniquad/src/native/linux_x11/drag_n_drop.rs
+          rustfmt +stable --edition 2018 --check vendor/miniquad/src/conf.rs vendor/miniquad/src/native/wasm.rs vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs vendor/miniquad/src/native/linux_x11/clipboard.rs vendor/miniquad/src/native/linux_x11/drag_n_drop.rs
       - name: Verify the published backend source and narrow patch
         run: python3 tools/vendor_miniquad.py
       - name: Check backend cache and property boundaries

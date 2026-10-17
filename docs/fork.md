@@ -35,6 +35,37 @@ Browser WebGL1 omits MSAA resolves; WebGL2 and native GL exercise them where
 supported. Software-rendered/Xvfb fixtures do not establish physical-GPU coverage
 or graphics-context restoration.
 
+## WebGL selection
+
+The default `WebGLVersion::Auto` requests a WebGL2 context first. Only a null
+result or an exception during that context's creation triggers a WebGL1 attempt.
+It does not switch contexts after a shader, capability or rendering failure.
+Explicit `WebGL1` and `WebGL2` requests try only that version and fail clearly
+if unavailable; if neither automatic attempt succeeds, startup fails before
+extension setup or GPU resources are created. To require a particular version:
+
+```rust
+use macroquad::miniquad::conf::WebGLVersion;
+use macroquad::prelude::Conf;
+
+fn window_conf() -> Conf {
+    let mut conf = Conf::default();
+    conf.platform.webgl_version = WebGLVersion::WebGL1; // Or WebGL2; Auto is default.
+    conf
+}
+```
+
+Rust derives its GL version, formats and MSAA capabilities from the actual
+context. A fallback WebGL1 context does not advertise WebGL2/MSAA resolves.
+The paired runtime's `webgl_selection_version` extension v1 is checked before
+context creation while the legacy Miniquad ABI stays 2 and audio ABI stays 1.
+The earlier `c4cc…67e9` runtime is incompatible with this new Rust build; use the
+included regenerated runtime and upgrade Rust/JavaScript together. Auto is a
+capability preference, not a performance measurement or context-restoration feature.
+Exhaustive matches over `WebGLVersion` must handle the new `Auto` variant.
+Applications requiring WebGL2-only shaders/features should request `WebGL2`
+explicitly; Auto's WebGL1 fallback requires a compatible rendering path.
+
 ## Deliberate API changes
 
 - Construct CPU images with `Image::from_rgba8(width, height, bytes)?`; use
@@ -152,10 +183,12 @@ xvfb-run -a bash tests/browser_release.sh
 It builds the finite WASM examples, checks genuine imports/ABIs, then runs
 audio resumption from a controlled suspended context after a trusted WebDriver
 gesture, decode/cancellation, graphics ownership, UI and codec fixtures in
-Chrome and Firefox. Those runtime fixtures use their existing WebGL1 default;
-the texture/pass fixture explicitly runs both WebGL1 and WebGL2 with the shipped
-runtime in each browser. Both WebGL paths remain supported; no WebGL2 requirement
-or automatic selection is introduced by this validation setup. Audio evidence
+Chrome and Firefox. Those runtime fixtures use the new Auto default. The
+texture/pass fixture checks Auto→2, forced fallback→1, strict explicit1/2,
+both-unavailable and strict2-unavailable failure, and old-runtime rejection.
+Successful cells check actual GL version/capabilities, pixels, GL errors and
+texture/FBO cleanup; failures require the expected error before resources are
+created. Both WebGL paths remain supported. Audio evidence
 observes the actual decoding context's runtime `resume()` call and later running
 state; it does not qualify every browser autoplay-policy setting or audio device.
 

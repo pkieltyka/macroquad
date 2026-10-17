@@ -169,11 +169,14 @@ impl EventHandler for Regression {
             self.backend.info().features.resolve_attachments
         );
         #[cfg(target_arch = "wasm32")]
-        assert_eq!(
-            self.backend.info().features.resolve_attachments,
-            cfg!(feature = "webgl2"),
-            "MSAA resolve capability must match the selected WebGL version"
-        );
+        {
+            let info = self.backend.info();
+            assert_eq!(
+                info.features.resolve_attachments,
+                info.gl_version_string.starts_with("WebGL 2."),
+                "MSAA resolve capability must match the actual context"
+            );
+        }
         self.backend
             .begin_default_pass(PassAction::clear_color(0., 0., 0., 1.));
         self.backend.apply_pipeline(&self.pipeline);
@@ -227,10 +230,10 @@ fn main() {
         window_height: 64,
         ..Default::default()
     };
-    config.platform.webgl_version = if cfg!(feature = "webgl2") {
-        conf::WebGLVersion::WebGL2
-    } else {
-        conf::WebGLVersion::WebGL1
-    };
+    if cfg!(feature = "webgl2") {
+        config.platform.webgl_version = conf::WebGLVersion::WebGL2;
+    } else if !cfg!(feature = "auto") {
+        config.platform.webgl_version = conf::WebGLVersion::WebGL1;
+    }
     start(config, || Box::new(Regression::new()));
 }

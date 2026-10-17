@@ -3,7 +3,8 @@
 `miniquad/` contains the published **0.4.11** crate without a version upgrade.
 It is pinned by Macroquad's direct path dependency so a consumer of this git
 fork also gets the patch; Cargo ignores a dependency's own `[patch]` section.
-The upstream API, features, JavaScript source, and platform sources are retained.
+Upstream features and platform sources are retained with the local deltas below,
+including additive Auto configuration and the paired JavaScript initializer.
 
 - Published artifact: <https://static.crates.io/crates/miniquad/miniquad-0.4.11.crate>
 - Artifact SHA256: `dcbaea978d741f3b60ced666b06a2a1e4a2bc81cb8b9dd29f4a40965e1f59e65`
@@ -34,8 +35,15 @@ The upstream API, features, JavaScript source, and platform sources are retained
   four-byte integer that Xlib overread on LP64. The production writer is covered
   by native-long contract reads under Miri and a live Xlib property roundtrip.
 
-The latter changes are local fixes, not imported community patches. There are
-no other changes inside the vendored crate and no JavaScript/runtime update.
+Local browser selection in `src/conf.rs`, `src/native/wasm.rs` and `js/gl.js`
+adds default Auto/mode0, preferring WebGL2 with fallback only on context-creation
+failure. Explicit1/2 stay strict. A required `webgl_selection_version` extension
+v1 prevents old JavaScript silently interpreting Auto as a strict WebGL2 request.
+Actual context version/capability detection remains authoritative. The maintained
+aggregate copies this initializer from the vendored JS.
+
+These are local fixes, not imported community patches. There are no other
+changes inside the vendored crate beyond the complete patch above.
 [Backend boundary notes](../docs/backend-boundaries.md) describe the contracts,
 primary Xlib sources, intentional ownership migration and validation limits.
 

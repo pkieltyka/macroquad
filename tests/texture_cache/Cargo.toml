@@ -9,6 +9,7 @@ miniquad = { version = "=0.4.11", path = "../../vendor/miniquad", features = ["l
 
 [features]
 webgl2 = []
+auto = []
 
 [[bin]]
 name = "texture-cache-regression"

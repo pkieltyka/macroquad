@@ -6,6 +6,25 @@ are called out separately. Use `git log --follow -- <path>` to find the local
 integration commit. Recheck the ledger when updating upstream and drop patches
 that have landed there.
 
+## Local automatic WebGL selection for 0.5.0
+
+The local `WebGLVersion::Auto` variant is now the default. The WASM boundary
+maps it to mode0 and checks the additive `webgl_selection_version` extension v1
+before context setup. The patched vendor initializer tries WebGL2 then WebGL1
+only on context-creation failure; explicit1/2 stay strict, and unavailable or
+unsupported requests fail before extension/GPU calls. Rust capabilities continue
+to use the actual context's owned version string. This is a local fork change,
+not a community PR adoption, Miniquad version upgrade or performance claim.
+
+The maintained aggregate deterministically takes its initializer from the
+vendored `js/gl.js`; source/provenance/runtime assets bind that input. Legacy
+Miniquad ABI2/audio ABI1 and previous audio/cache/ownership fixes are retained.
+The historical c4cc runtime is a negative-test input, not the current release
+bundle or evidence for new Auto game acceptance. Genuine Chrome/Firefox fixtures
+cover auto2, forced fallback1, strict1/2, missing contexts and old-runtime failure,
+checking pixels, actual capabilities, GL errors and resource cleanup. The full
+vendor delta remains reconstructible from the published 0.4.11 archive.
+
 ## Lazy UI material and uniform safety
 
 Reviewed with `gh pr view` and `gh pr diff` on 2026-10-16. Both PRs remain open,

@@ -1,10 +1,14 @@
 # Browser runtime provenance
 
 Fork release 0.5.0 pairs its Rust source with `js/mq_js_bundle.js`, SHA-256
+`501cbd90f2494eda6d05407e8328f7a47fa08c5c8c802a9c056d036bbd2c4dac`
+(40,664 bytes). It adds automatic WebGL selection to the earlier reviewed
+runtime. Historical acceptance used
+`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271` and runtime SHA-256
 `c4cc9799355e046d0fef61e1078e5524b08e0516fb914246b9808c0d80d367e9`
-(38,256 bytes). These are the reviewed runtime bytes used with the earlier
-`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271` library implementation. Importing
-them here does not renew game acceptance on the 0.5.0 package.
+(38,256 bytes), retained only as a negative-test input at
+`tests/fixtures/mq_js_bundle-pre-auto.js`. Those old game results do not validate
+this new Auto runtime or a new 0.5.0 game pin.
 
 The unchanged published Macroquad **0.4.16** aggregate is committed at
 `vendor/browser-runtime/macroquad-0.4.16.js`. Its crate VCS revision is
@@ -25,6 +29,18 @@ bounded download copying, import lookup by module, an optional WASM response
 callback, quiet audio unlock, a scoped quad-net registrar (fixing upstream's
 strict-mode startup exception), a terminal newline and the audio state extension.
 The base retains upstream's combined document focus/visibility handling.
+
+The context initializer is copied deterministically from the patched vendored
+`vendor/miniquad/js/gl.js`; its full input hash is recorded in provenance and
+the runtime asset includes that source and Miniquad's original license files.
+Auto requests WebGL2 first and falls back to WebGL1 only when creation returns
+null or throws. Explicit1/2 do not fall back. Unsupported modes and unavailable
+required contexts fail before extension/GPU calls. Only the actual WebGL1 path
+initializes legacy extensions; Rust capabilities follow the actual context.
+`env.webgl_selection_version` returns extension version1, required by current
+Rust before startup. Miniquad ABI2 and existing plugin/audio ABI1 remain intact;
+the strict import gate rejects the old bundle before fallback stubs can hide
+the missing extension. This does not claim faster frames or context restoration.
 
 Audio plugin ABI remains 1. `env.audio_source_state` extension v1 reports pending
 0, loaded 1, failed -1 and unknown/deleted -2. It copies bytes before decode,

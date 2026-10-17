@@ -25,8 +25,28 @@ var high_dpi = false;
 var blocking_event_loop = false;
 
 function init_webgl(version) {
+    if (version !== 0 && version !== 1 && version !== 2) {
+        throw new RangeError("Unsupported WebGL request: " + version);
+    }
+    function createContext(name) {
+        try {
+            return canvas.getContext(name);
+        } catch (error) {
+            return null;
+        }
+    }
+    gl = null;
+    const automatic = version === 0;
+    if (automatic) {
+        gl = createContext("webgl2");
+        if (gl !== null) return;
+        version = 1;
+    }
     if (version == 1) {
-        gl = canvas.getContext("webgl");
+        gl = createContext("webgl");
+        if (gl === null) {
+            throw new Error(automatic ? "Unable to initialize WebGL2 or WebGL1" : "Unable to initialize required WebGL1");
+        }
 
         function acquireVertexArrayObjectExtension(ctx) {
             // Extension available in WebGL 1 from Firefox 25 and WebKit 536.28/desktop Safari 6.0.3 onwards. Core feature in WebGL 2.
@@ -88,10 +108,8 @@ function init_webgl(version) {
             alert("Cant initialize WEBGL_depth_texture extension");
         }
     } else {
-        gl = canvas.getContext("webgl2");
-    }
-    if (gl === null) {
-        alert("Unable to initialize WebGL. Your browser or machine may not support it.");
+        gl = createContext("webgl2");
+        if (gl === null) throw new Error("Unable to initialize required WebGL2");
     }
 }
 
@@ -1458,7 +1476,8 @@ var importObject = {
             }
             animation_frame_timeout = window.requestAnimationFrame(animation);
         },
-        init_webgl
+        init_webgl,
+        webgl_selection_version: function () { return 1; }
     }
 };
 

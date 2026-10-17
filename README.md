@@ -5,6 +5,8 @@ This is `pkieltyka/macroquad`, a deliberately narrower fork of
 WASM and WebGL1/2**, including Zubspace. **Chrome and Firefox** are the primary
 browser targets, intended to run on Windows, macOS, Linux and other modern
 operating systems with the required WebAssembly, WebGL and browser audio capabilities.
+The default selects WebGL2 when context creation succeeds and falls back to
+WebGL1 otherwise; explicit WebGL1/2 requests remain strict overrides.
 Building the Rust code requires **Rust 1.88+**.
 
 Current browser fixtures run on Linux with Chrome and Firefox; they do not
@@ -23,6 +25,7 @@ The fork deliberately removes scene/storage/tween and raw backend APIs and uses
 scoped UI access. It is not a drop-in replacement across upstream platforms.
 Local remediation and regression evidence do not establish an official RustSec
 patched release, a clean dependency audit, or a measured performance improvement.
+Automatic selection chooses capabilities, not a measured best-FPS configuration.
 
 - [Supported APIs, build matrix, updates and rollback](docs/fork.md)
 - [Pending browser priorities after 0.5.0](docs/browser-roadmap.md)

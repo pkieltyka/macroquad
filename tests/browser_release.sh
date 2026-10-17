@@ -41,11 +41,11 @@ python3 tests/ui_material_browser.py --fixture tests/graphics_ownership_regressi
 python3 tests/ui_material_browser.py --output "$output/ui" --timeout 60
 python3 tests/ui_material_browser.py --fixture tests/image_codec_regression.html \
     --marker 'image codec regression: passed' --output "$output/codecs" --timeout 60
-python3 tests/texture_cache/browser.py --wasm-dir "$output/webgl" --runtime js/mq_js_bundle.js
+python3 tests/texture_cache/browser.py --wasm-dir "$output/webgl" --runtime js/mq_js_bundle.js --selection
 
 sha256sum js/mq_js_bundle.js \
     target/wasm32-unknown-unknown/debug/examples/audio_lifecycle_regression.wasm \
     target/wasm32-unknown-unknown/debug/examples/graphics_ownership_regression.wasm \
     target/wasm32-unknown-unknown/debug/examples/ui_material_regression.wasm \
     target/wasm32-unknown-unknown/debug/examples/image_codec_regression.wasm \
-    "$output/webgl/webgl1.wasm" "$output/webgl/webgl2.wasm" > "$output/checksums.sha256"
+    "$output/webgl/webgl1.wasm" "$output/webgl/webgl2.wasm" "$output/webgl/auto.wasm" > "$output/checksums.sha256"

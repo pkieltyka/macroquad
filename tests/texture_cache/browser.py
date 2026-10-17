@@ -36,19 +36,22 @@ def request(port, method, path, data=None):
     return value
 
 
-def build(output):
+def build(output, selection=False):
     env = os.environ.copy()
     env["CARGO_TARGET_DIR"] = str(ROOT / "target" / "texture-cache-build")
     flags = env.get("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS", "")
     env["CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS"] = flags + " -C link-arg=--allow-undefined"
     command = ["cargo", "build", "--manifest-path", str(ROOT / "tests/texture_cache/Cargo.toml"), "--target", "wasm32-unknown-unknown"]
-    for version in (1, 2):
-        subprocess.run(command + ([] if version == 1 else ["--features", "webgl2"]), env=env, cwd=ROOT, check=True)
+    variants = [("webgl1", []), ("webgl2", ["--features", "webgl2"])]
+    if selection:
+        variants.append(("auto", ["--features", "auto"]))
+    for name, flags in variants:
+        subprocess.run(command + flags, env=env, cwd=ROOT, check=True)
         source = Path(env["CARGO_TARGET_DIR"]) / "wasm32-unknown-unknown/debug/texture-cache-regression.wasm"
-        shutil.copyfile(source, output / f"webgl{version}.wasm")
+        shutil.copyfile(source, output / f"{name}.wasm")
 
 
-def check(browser, base_url, output, expected_stale, runtime=None):
+def check(browser, base_url, output, expected_stale, runtime=None, selection=False):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -79,11 +82,21 @@ def check(browser, base_url, output, expected_stale, runtime=None):
                         raise RuntimeError(f"{browser} driver did not start; see {log.name}")
                     time.sleep(0.1)
             session = request(port, "POST", "/session", {"capabilities": {"alwaysMatch": options}})["sessionId"]
-            for version in (1, 2):
-                wasm = "/" + (output / f"webgl{version}.wasm").relative_to(ROOT).as_posix()
+            cases = [("webgl1", "webgl1", 1, None, None), ("webgl2", "webgl2", 2, None, None)]
+            if selection:
+                cases += [("auto", "auto", 2, None, None), ("fallback", "auto", 1, "webgl2", None),
+                          ("unavailable", "auto", None, "all", "Unable to initialize WebGL2 or WebGL1"),
+                          ("strict2-unavailable", "webgl2", None, "webgl2", "Unable to initialize required WebGL2"),
+                          ("old-runtime", "auto", None, None, "Missing imports: env.webgl_selection_version")]
+            for name, artifact, version, blocked, failure in cases:
+                wasm = "/" + (output / f"{artifact}.wasm").relative_to(ROOT).as_posix()
                 query = {"wasm": wasm}
                 if runtime:
                     query["runtime"] = "/" + runtime.resolve().relative_to(ROOT).as_posix()
+                if blocked:
+                    query["block"] = blocked
+                if name == "old-runtime":
+                    query["runtime"] = "/tests/fixtures/mq_js_bundle-pre-auto.js"
                 url = base_url + "/tests/texture_cache/case.html?" + urllib.parse.urlencode(query)
                 request(port, "POST", f"/session/{session}/url", {"url": url})
                 deadline = time.monotonic() + 30
@@ -92,14 +105,31 @@ def check(browser, base_url, output, expected_stale, runtime=None):
                     if evidence and (evidence["errors"] or evidence["completed"]):
                         break
                     if time.monotonic() >= deadline:
-                        raise RuntimeError(f"WebGL{version} timed out: {evidence}")
+                        raise RuntimeError(f"{name} timed out: {evidence}")
                     time.sleep(0.1)
-                (output / f"{browser}-webgl{version}.json").write_text(json.dumps(evidence, indent=2) + "\n")
+                (output / f"{browser}-{name}.json").write_text(json.dumps(evidence, indent=2) + "\n")
+                expected_requests = (["webgl"] if name == "webgl1" else ["webgl2", "webgl"]
+                                     if name in ("fallback", "unavailable") else [] if name == "old-runtime" else ["webgl2"])
+                expected_mode = None if name == "old-runtime" else 0 if artifact == "auto" else 1 if artifact == "webgl1" else 2
+                if evidence["requests"] != expected_requests or evidence["requestedMode"] != expected_mode:
+                    raise AssertionError(evidence)
+                if failure:
+                    expected_error = "Error: " + failure
+                    if (evidence["startupError"] != expected_error or evidence["completed"] or evidence["version"] is not None
+                            or evidence["createdTextures"] or evidence["createdFramebuffers"]
+                            or not evidence["errors"] or any(message not in [expected_error, "WASM failed to load, probably incompatible gl.js version"] for message in evidence["errors"])):
+                        raise AssertionError(evidence)
+                    print(f"{browser} {name}: expected clear failure before GPU resources", flush=True)
+                    continue
                 if evidence["errors"] or not evidence["completed"] or evidence["version"] != version:
                     raise AssertionError(evidence)
                 if bool(evidence["staleBindings"]) != expected_stale:
                     raise AssertionError(evidence)
-                print(f"{browser} WebGL{version}: correct pixels, GL error 0, stale binds {evidence['staleBindings']}", flush=True)
+                if (evidence["liveTextures"] or evidence["liveFramebuffers"] or not evidence["createdTextures"]
+                        or not evidence["createdFramebuffers"] or not any(f"WebGL {version}.0" in message
+                        and f"MSAA resolves {str(version == 2).lower()}" in message for message in evidence["messages"])):
+                    raise AssertionError(evidence)
+                print(f"{browser} {name} selected WebGL{version}: correct pixels, GL error 0, stale binds {evidence['staleBindings']}, resources released", flush=True)
         finally:
             if session:
                 with contextlib.suppress(Exception):
@@ -122,6 +152,7 @@ if __name__ == "__main__":
     parser.add_argument("--wasm-dir", default="target/texture-cache-web")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--expect-stale", action="store_true")
+    parser.add_argument("--selection", action="store_true", help="Exercise Auto, forced fallback, strict failure and old-runtime rejection")
     parser.add_argument("--runtime", type=Path, help="Use the paired aggregate instead of the vendored Miniquad runtime")
     parser.add_argument("--browsers", nargs="+", choices=["chrome", "firefox"], default=["chrome", "firefox"])
     args = parser.parse_args()
@@ -129,12 +160,12 @@ if __name__ == "__main__":
     output.relative_to(ROOT)
     output.mkdir(parents=True, exist_ok=True)
     if not args.no_build:
-        build(output)
+        build(output, args.selection)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=str(ROOT)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for browser in args.browsers:
-            check(browser, f"http://127.0.0.1:{server.server_port}", output, args.expect_stale, args.runtime)
+            check(browser, f"http://127.0.0.1:{server.server_port}", output, args.expect_stale, args.runtime, args.selection)
     finally:
         server.shutdown()
         server.server_close()

@@ -17,6 +17,9 @@ for required in git rustc cargo node python3 openbox sha256sum \
     command -v "$required" >/dev/null || { echo "Missing required tool: $required" >&2; exit 1; }
 done
 mkdir -p "$output"
+if [[ -z "${MACROQUAD_BROWSER_WM_PID:-}" ]]; then
+    exec python3 tests/browser_process.py --window-manager "$output" -- bash "$0" "$@"
+fi
 {
     echo "Browser gate: $mode"
     git rev-parse HEAD
@@ -43,14 +46,6 @@ if [[ "$mode" == full ]]; then
         node tools/check_browser_runtime.mjs --wasm "target/wasm32-unknown-unknown/debug/examples/$fixture.wasm" --no-audio
     done
 fi
-
-openbox --sm-disable > "$output/openbox.log" 2>&1 &
-browser_window_manager=$!
-cleanup() {
-    kill "$browser_window_manager" 2>/dev/null || true
-    wait "$browser_window_manager" 2>/dev/null || true
-}
-trap cleanup EXIT
 
 if [[ "$mode" == full ]]; then
     python3 tests/ui_material_browser.py --fixture tests/audio_lifecycle_regression.html \

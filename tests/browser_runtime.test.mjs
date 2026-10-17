@@ -19,8 +19,9 @@ const base = fs.readFileSync(path.join(root, sources.metadata.base.bundlePath), 
 const uint = (value) => value < 128 ? [value] : [(value & 127) | 128, ...uint(value >>> 7)];
 const text = (value) => [...uint(Buffer.byteLength(value)), ...Buffer.from(value)];
 const section = (id, bytes) => [id, ...uint(bytes.length), ...bytes];
-function wasm({ imports = [], miniquad = 2, audio = 1, audioExport = true, returnBytes = false } = {}) {
-  imports = [["env", "webgl_selection_version"], ...imports];
+function wasm({ imports = [], miniquad = 2, audio = 1, audioExport = true, returnBytes = false,
+                initializer = ["env", "init_webgl"], initParams = [0x7f, 0x7f], initResults = [] } = {}) {
+  imports = [["env", "webgl_selection_version"], ...(initializer ? [initializer] : []), ...imports];
   const exports = [["crate_version", miniquad], ...(audioExport ? [["macroquad_audio_crate_version", audio]] : [])];
   const code = exports.flatMap(([, value]) => {
     const body = [0, 0x41, value, 0x0b];
@@ -28,8 +29,8 @@ function wasm({ imports = [], miniquad = 2, audio = 1, audioExport = true, retur
   });
   const bytes = Uint8Array.from([
     0, 97, 115, 109, 1, 0, 0, 0,
-    ...section(1, [1, 0x60, 0, 1, 0x7f]),
-    ...(imports.length ? section(2, [...uint(imports.length), ...imports.flatMap(([module, name]) => [...text(module), ...text(name), 0, 0])]) : []),
+    ...section(1, [2, 0x60, 0, 1, 0x7f, 0x60, ...uint(initParams.length), ...initParams, ...uint(initResults.length), ...initResults]),
+    ...(imports.length ? section(2, [...uint(imports.length), ...imports.flatMap(([module, name], index) => [...text(module), ...text(name), 0, initializer && index === 1 ? 1 : 0])]) : []),
     ...section(3, [...uint(exports.length), ...exports.flatMap(() => [0])]),
     ...section(7, [...uint(exports.length), ...exports.flatMap(([name], index) => [...text(name), 0, ...uint(imports.length + index)])]),
     ...section(10, [...uint(exports.length), ...code]),
@@ -156,6 +157,38 @@ test("the contract rejects absent plugins and Rust/browser ABI mismatches", () =
   runtime.plugins[0].version = 2;
   assert.throws(() => validateWasmContract(wasm(), runtime, sources.metadata.abi), /browser plugin names\/versions/);
 });
+
+test("engine linking checks the exact initializer signature without calling JavaScript graphics", () => {
+  const runtime = createRuntime(sources);
+  runtime.importObject.env.init_webgl = () => { throw new Error("must not initialize graphics"); };
+  validateWasmContract(wasm(), runtime, sources.metadata.abi);
+  for (const options of [
+    { initParams: [0x7f] }, { initParams: [] }, { initParams: [0x7f, 0x7f, 0x7f] },
+    { initParams: [0x7d, 0x7f] }, { initResults: [0x7f] },
+  ]) {
+    assert.throws(() => validateWasmContract(wasm(options), runtime, sources.metadata.abi), /env.init_webgl must have signature.*stale v1 WASM/);
+  }
+  assert.throws(() => validateWasmContract(wasm({ initializer: null }), runtime, sources.metadata.abi), /must import runtime initializer/);
+  for (const initializer of [["env", "other_init"], ["other", "init_webgl"]]) {
+    runtime.importObject[initializer[0]] = { ...runtime.importObject[initializer[0]], [initializer[1]]() {} };
+    assert.throws(() => validateWasmContract(wasm({ initializer }), runtime, sources.metadata.abi), /must import runtime initializer/);
+  }
+});
+
+test("an unrelated typed import mismatch is not diagnosed as a stale initializer", () => {
+  const runtime = createRuntime(sources);
+  runtime.importObject.other = { init_webgl: typedVoid() };
+  const candidate = wasm({ imports: [["other", "init_webgl"]] });
+  // That trailing import has () -> i32 in this fixture, so use a void witness.
+  assert.throws(() => validateWasmContract(candidate, runtime, sources.metadata.abi), WebAssembly.LinkError);
+});
+
+function typedVoid() {
+  return new WebAssembly.Instance(new WebAssembly.Module(Uint8Array.from([
+    0, 97, 115, 109, 1, 0, 0, 0, ...section(1, [1, 0x60, 0, 0]),
+    ...section(3, [1, 0]), ...section(7, [1, ...text("void"), 0, 0]), ...section(10, [1, 2, 0, 0x0b]),
+  ]))).exports.void;
+}
 
 test("Rust pairing checks both version and source identity and rejects duplicate resolutions", () => {
   const lock = Object.entries(sources.metadata.rustPackages).map(([name, wanted]) => `[[package]]\nname = "${name}"\nversion = "${wanted.version}"\n${wanted.source ? `source = "${wanted.source}"\n` : ""}`).join("\n");
@@ -298,9 +331,9 @@ test("WASM checker requires the audio extension and permits explicit noaudio fix
     fs.writeFileSync(file, wasm({ returnBytes: true }));
     assert.throws(() => checkBrowserRuntime(root, file), /must import runtime extension/);
     fs.writeFileSync(file, wasm({ audioExport: false, returnBytes: true }));
-    assert.equal(checkBrowserRuntime(root, file, false).imports, 1);
+    assert.equal(checkBrowserRuntime(root, file, false).imports, 2);
     fs.writeFileSync(file, wasm({ imports: [["env", "audio_source_state"]], returnBytes: true }));
-    assert.equal(checkBrowserRuntime(root, file).imports, 2);
+    assert.equal(checkBrowserRuntime(root, file).imports, 3);
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }

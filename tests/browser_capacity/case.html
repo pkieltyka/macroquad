@@ -3,7 +3,8 @@
 <style>html,body {margin:0} canvas {width:64px;height:64px;display:block}</style>
 <canvas id="glcanvas" width="64" height="64" tabindex="1"></canvas>
 <script>
-window.evidence = {messages:[], errors:[], phases:[], completed:false};
+window.evidence = {messages:[], errors:[], expectedStartupErrors:[], phases:[], completed:false};
+const oldV1 = new URLSearchParams(location.search).get("selectionVersion") === "1";
 const contextRequests = [];
 evidence.contextRequests = contextRequests;
 evidence.resources = {createdBuffers:0,liveBuffers:0};
@@ -31,7 +32,8 @@ for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.pro
     };
     proto.bufferSubData = function(target, offset, data, ...args) {
         const binding = this.getParameter(target === this.ARRAY_BUFFER ? this.ARRAY_BUFFER_BINDING : this.ELEMENT_ARRAY_BUFFER_BINDING);
-        if (offset !== 0 || data.byteLength > stores.get(binding)) evidence.errors.push("Upload exceeds allocated buffer");
+        if (!binding || !stores.has(binding) || !Number.isSafeInteger(stores.get(binding))) evidence.errors.push("Upload allocation is unknown");
+        if (offset !== 0 || !Number.isSafeInteger(data.byteLength) || data.byteLength > stores.get(binding)) evidence.errors.push("Upload exceeds allocated buffer");
         uploads.set(binding,new Uint8Array(data.buffer,data.byteOffset,data.byteLength).slice());
         return upload.call(this,target,offset,data,...args);
     };
@@ -93,6 +95,10 @@ for (const level of ["log","info","warn","error"]) {
     console[level] = (...args) => {
         const value = args.join(" ");
         evidence.messages.push(value);
+        if (level === "error") {
+            if (oldV1 && /^RuntimeError: unreachable(?: executed)?$/.test(value)) evidence.expectedStartupErrors.push(value);
+            else evidence.errors.push(value);
+        }
         original.apply(console,args);
         try {
             if (value.startsWith("CAPACITY_BEGIN ")) begin(value.split(" ")[1]);

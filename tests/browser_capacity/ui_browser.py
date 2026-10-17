@@ -16,9 +16,8 @@ import urllib.parse
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tests/browser_scene"))
 import ui_material_browser as driver
-from browser import source_identity, sha256
+from browser_scene.browser import source_identity, sha256
 
 
 def main():
@@ -79,7 +78,7 @@ def main():
             {
                 "source": source,
                 "runtimeSha256": sha256(ROOT / "js/mq_js_bundle.js"),
-                "lockSha256": sha256(ROOT / "Cargo.lock"),
+                "lockSha256": sha256(ROOT / "tests/browser_capacity/Cargo.lock"),
                 "tools": {
                     name: subprocess.check_output(command, text=True).strip()
                     for name, command in {

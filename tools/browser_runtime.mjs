@@ -6,6 +6,17 @@ import vm from "node:vm";
 
 export const sha256 = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 
+// (module (func (export "init_webgl") (param i32 i32)))
+// A WASM export retains its exact type during linking; a JavaScript function
+// would also accept the stale v1 initializer's single argument.
+const typedWebglInitializer = new WebAssembly.Instance(new WebAssembly.Module(Uint8Array.from([
+  0, 97, 115, 109, 1, 0, 0, 0,
+  1, 6, 1, 0x60, 2, 0x7f, 0x7f, 0,
+  3, 2, 1, 0,
+  7, 14, 1, 10, ...Buffer.from("init_webgl"), 0, 0,
+  10, 4, 1, 2, 0, 0x0b,
+]))).exports.init_webgl;
+
 export function regenerateBundle(base, glSource = fs.readFileSync(new URL("../vendor/miniquad/js/gl.js", import.meta.url), "utf8")) {
   let bundle = base;
   const replace = (name, before, after) => {
@@ -113,9 +124,24 @@ export function validateWasmContract(module, runtime, abi, requireAudio = true) 
   assert.equal(vm.runInContext("version", runtime), abi.miniquad, "Miniquad browser ABI mismatch");
   assert.equal(typeof runtime.importObject.env.webgl_selection_version, "function", "WebGL selection extension missing");
   assert.equal(runtime.importObject.env.webgl_selection_version(), abi.webglSelection, "WebGL selection extension version mismatch");
+  const initializer = imports.findIndex((entry) => entry.module === "env" && entry.name === "init_webgl");
+  assert.notEqual(initializer, -1, "paired fork must import runtime initializer: env.init_webgl");
   // Rust has no WASM start function here. Instantiate without running main and
   // invoke only the constant ABI exports; no graphics/audio/RTC imports run.
-  const instance = new WebAssembly.Instance(module, runtime.importObject);
+  let instance;
+  try {
+    instance = new WebAssembly.Instance(module, {
+      ...runtime.importObject,
+      env: { ...runtime.importObject.env, init_webgl: typedWebglInitializer },
+    });
+  } catch (error) {
+    // V8's import-name formatting differs between Node 22 and 26. Its import
+    // ordinal identifies this specific mismatch without hiding unrelated ones.
+    if (error instanceof WebAssembly.LinkError && new RegExp(`Import #${initializer}\\b`).test(error.message)) {
+      throw new Error("WASM env.init_webgl must have signature (i32, i32) -> void; rebuild stale v1 WASM with the paired runtime v2 sources", { cause: error });
+    }
+    throw error;
+  }
   assert.equal(typeof instance.exports.crate_version, "function", "Miniquad WASM ABI export is missing");
   assert.equal(instance.exports.crate_version(), abi.miniquad, "Miniquad Rust/browser ABI mismatch");
   for (const name of (requireAudio ? abi.requiredWasmPlugins : [])) {

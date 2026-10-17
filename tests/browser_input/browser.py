@@ -17,18 +17,18 @@ import urllib.parse
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tests/browser_scene"))
 import ui_material_browser as driver
-from browser import source_identity, sha256
+from browser_scene.browser import source_identity, sha256
 
 
 def execute(port, session, script, args=None):
-    return driver.request(
+    serialized = driver.request(
         port,
         "POST",
         f"/session/{session}/execute/sync",
-        {"script": script, "args": args or []},
+        {"script": "return JSON.stringify((function(){" + script + "}).apply(null, arguments));", "args": args or []},
     )
+    return json.loads(serialized) if serialized is not None else None
 
 
 def wait(port, session, predicate, description):
@@ -66,6 +66,21 @@ def actions(port, session, steps):
     )
 
 
+def settled_event(port, session, event=None):
+    script = """
+const done = arguments[arguments.length - 1];
+const event = arguments[0];
+(event ? inputWake(event.type, event.ids) : inputIdle()).then(
+    result => done(JSON.stringify(result)),
+    error => done(JSON.stringify({error: String(error)})));
+"""
+    serialized = driver.request(port, "POST", f"/session/{session}/execute/async",
+                                {"script": script, "args": [event]}, timeout=5)
+    result = json.loads(serialized)
+    assert not result.get("error"), result
+    return result
+
+
 def outside(port, session):
     wait(port, session, lambda r: r.get("ready"), "ready")
     actions(
@@ -77,6 +92,7 @@ def outside(port, session):
         ],
     )
     wait(port, session, lambda r: r["flags"] & 1, "canvas press")
+    idle = settled_event(port, session)
     actions(
         port,
         session,
@@ -88,9 +104,11 @@ def outside(port, session):
     result = wait(
         port,
         session,
-        lambda r: not r["flags"] & 1 and any(e["type"] == "up" for e in r["events"]),
+        lambda r: not r["flags"] & 1 and len(r["frames"]) > idle["frameCount"]
+        and any(e["type"] == "up" for e in r["events"]),
         "owned outside release reaches WASM",
     )
+    assert result["scheduler"]["requests"] > idle["requests"], result
     assert result["trusted"][-1] == {
         "type": "mouseup",
         "trusted": True,
@@ -139,6 +157,24 @@ def flush(port, session):
 
 def ups(result):
     return sum(e["type"] == "up" for e in result["events"])
+
+
+def focus_returned(result, previous_events):
+    events = result["domFocus"][previous_events:]
+    return (
+        result["focused"] and result["domFocused"] and result["visibility"] == "visible"
+        and len(events) >= 2 and len(events) % 2 == 0
+        and all(event["trusted"] for event in events)
+        and [event["focused"] for event in events] == [False, True] * (len(events) // 2)
+    )
+
+
+def validate_blur_release(result, previous_focus, previous_ups):
+    assert (
+        result["flags"] & 7 == 0
+        and ups(result) == previous_ups + 2
+        and result["focus"][previous_focus:][-2:] == ["false", "true"]
+    ), result
 
 
 def exercise_all(port, session):
@@ -221,6 +257,9 @@ def exercise_all(port, session):
     )
     # Real tab focus/visibility transitions, with held mouse and keyboard input.
     execute(port, session, "document.querySelector('canvas').focus();")
+    focused = wait(port, session, lambda r: r["focused"] and r["domFocused"] and r["visibility"] == "visible", "initial document focus")
+    focus_count = len(focused["focus"])
+    dom_focus_count = len(focused["domFocus"])
     original = driver.request(port, "GET", f"/session/{session}/window")
     before = ups(snapshot(port, session))
     actions(
@@ -235,7 +274,7 @@ def exercise_all(port, session):
     execute(
         port,
         session,
-        "document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown',{code:'KeyA',bubbles:true})); syntheticTouch('touchstart',[50]);",
+        "syntheticKey(document.querySelector('canvas')); syntheticTouch('touchstart',[50]);",
     )
     assert snapshot(port, session)["flags"] & 7 == 7
     other = driver.request(
@@ -244,12 +283,11 @@ def exercise_all(port, session):
     driver.request(port, "POST", f"/session/{session}/window", {"handle": other})
     driver.request(port, "DELETE", f"/session/{session}/window")
     driver.request(port, "POST", f"/session/{session}/window", {"handle": original})
+    wait(port, session, lambda r: focus_returned(r, dom_focus_count), "new trusted DOM focus return")
+    # Restored callbacks queue Recorder input but do not wake this blocking loop.
+    # Flush only after the DOM transition has delivered the runtime callback.
     result = flush(port, session)
-    assert (
-        result["flags"] & 7 == 0
-        and ups(result) == before + 2
-        and result["focus"][-2:] == ["false", "true"]
-    ), result
+    validate_blur_release(result, focus_count, before)
     released = [e["button"] for e in result["events"] if e["type"] == "up"][-2:]
     # Right terminates first; Left waits for the simulated hold's blur cleanup.
     assert released == [2, 0], result
@@ -258,13 +296,15 @@ def exercise_all(port, session):
         session,
         [{"type": "pointerUp", "button": 0}, {"type": "pointerUp", "button": 2}],
     )
+    duplicate = flush(port, session)
+    assert duplicate["flags"] & 7 == 0 and ups(duplicate) == ups(result), duplicate
     check(
         "syntheticTouch('touchcancel',[50]); syntheticTouch('touchstart',[51]); syntheticMouse('mouseup',0,window);",
         True,
     )
     check("syntheticTouch('touchcancel',[51]);", False, 1)
     check(
-        "document.getElementById('other').dispatchEvent(new KeyboardEvent('keydown',{code:'KeyA',bubbles:true}));",
+        "syntheticKey(document.getElementById('other'));",
         False,
     )
     assert not snapshot(port, session)["flags"] & 4
@@ -283,7 +323,7 @@ def exercise_all(port, session):
     execute(
         port,
         session,
-        "const event=new MouseEvent('mousemove',{clientX:600,clientY:600});Object.defineProperties(event,{movementX:{value:7},movementY:{value:-3}});document.querySelector('canvas').dispatchEvent(event);",
+        "syntheticRawMotion();",
     )
     moved = snapshot(port, session)
     assert (moved["x"], moved["y"]) == (locked["x"] + 7, locked["y"] - 3), (
@@ -308,10 +348,8 @@ def exercise_touch_wake(port, session):
     for enabled, identifier in [(True, 61), (False, 62)]:
         execute(port, session, "wasm_exports.input_simulate(arguments[0]);", [enabled])
         flush(port, session)
-        count = len(snapshot(port, session)["frames"])
-        execute(
-            port, session, "syntheticTouch('touchstart',arguments[0]);", [[identifier]]
-        )
+        trial = settled_event(port, session, {"type": "touchstart", "ids": [identifier]})
+        count = trial["before"]["frameCount"]
         result = wait(
             port,
             session,
@@ -321,11 +359,9 @@ def exercise_touch_wake(port, session):
             "touch-only start wakes real blocking loop",
         )
         assert bool(result["flags"] & 1) == enabled, result
-        count = len(result["frames"])
         before = ups(result)
-        execute(
-            port, session, "syntheticTouch('touchcancel',arguments[0]);", [[identifier]]
-        )
+        trial = settled_event(port, session, {"type": "touchcancel", "ids": [identifier]})
+        count = trial["before"]["frameCount"]
         result = wait(
             port,
             session,

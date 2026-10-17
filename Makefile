@@ -19,8 +19,10 @@ build:
 
 check-runtime:
 	$(NODE) tools/regenerate_browser_runtime.mjs --check
-	$(NODE) --test tests/browser_runtime.test.mjs tests/audio_unlock_gate.test.mjs tests/webgl_selection.test.mjs tests/browser_scene/oracle.test.mjs tests/browser_scene/submission.test.mjs
+	$(NODE) --test tests/browser_runtime.test.mjs tests/audio_unlock_gate.test.mjs tests/webgl_selection.test.mjs tests/browser_fixture.test.mjs tests/browser_scene/oracle.test.mjs tests/browser_scene/submission.test.mjs
 	$(PYTHON) tests/test_browser_audio_gate.py
+	$(PYTHON) tests/test_browser_process.py
+	$(PYTHON) tests/test_browser_input.py
 	$(PYTHON) tests/browser_scene/test_protocol.py
 	$(PYTHON) tests/test_prepare_release.py
 

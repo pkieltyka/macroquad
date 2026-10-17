@@ -2,10 +2,43 @@
 <style>html,body {margin:0} #glcanvas {position:absolute;left:40px;top:40px;width:160px;height:120px} #other {position:absolute;left:300px;top:200px}</style>
 <canvas id="glcanvas" width="160" height="120" tabindex="1"></canvas><button id="other">Other control</button>
 <script>
-window.evidence={messages:[],errors:[],completed:false,events:[],touches:[],focus:[],frames:[],trusted:[],ready:false};
+window.evidence={messages:[],errors:[],completed:false,events:[],touches:[],focus:[],domFocus:[],frames:[],trusted:[],synthetic:[],wakeTrials:[],ready:false};
+let domFocused=document.hasFocus()&&document.visibilityState==="visible";
+const observeFocus=event=>{
+ const focused=document.hasFocus()&&document.visibilityState==="visible";
+ if(focused!==domFocused){domFocused=focused;evidence.domFocus.push({focused,type:event.type,trusted:event.isTrusted});}
+};
+window.addEventListener("focus",observeFocus);window.addEventListener("blur",observeFocus);
+document.addEventListener("visibilitychange",observeFocus);
+const nativeFrame=window.requestAnimationFrame.bind(window),nativeCancel=window.cancelAnimationFrame.bind(window);
+const pendingFrames=new Set();let requestedFrames=0;
+window.requestAnimationFrame=callback=>{
+ const id=nativeFrame(time=>{pendingFrames.delete(id);callback(time);});
+ pendingFrames.add(id);requestedFrames++;return id;
+};
+window.cancelAnimationFrame=id=>{pendingFrames.delete(id);nativeCancel(id);};
+window.inputIdle=()=>new Promise((resolve,reject)=>{
+ let previous=-1,quiet=0;const deadline=performance.now()+3000;
+ const inspect=()=>{
+  const frameCount=evidence.frames.length;
+  quiet=pendingFrames.size===0&&frameCount===previous?quiet+1:0;previous=frameCount;
+  if(quiet>=2)return resolve({frameCount,pending:pendingFrames.size,requests:requestedFrames});
+  if(performance.now()>=deadline)return reject(new Error("Blocking fixture did not become idle"));
+  nativeFrame(inspect);
+ };
+ nativeFrame(inspect);
+});
+window.inputWake=(type,ids)=>inputIdle().then(before=>{
+ syntheticTouch(type,ids);
+ const after={pending:pendingFrames.size,requests:requestedFrames};
+ const trial={type,ids,source:"synthetic DOM",before,after};evidence.wakeTrials.push(trial);
+ if(before.pending!==0||after.requests<=before.requests||after.pending===0)throw new Error("Fresh event did not schedule a blocking frame");
+ return trial;
+});
 for(const level of ["log","info","warn","error"]) {
  const original=console[level]; console[level]=(...args)=>{
   const value=args.join(" "); evidence.messages.push(value); original.apply(console,args);
+  if(level==="error")evidence.errors.push(value);
   if(value==="browser input regression: passed") evidence.completed=true;
   const parts=value.split(" ");
   if(parts[0]==="INPUT_READY") evidence.ready=true;
@@ -16,14 +49,34 @@ for(const level of ["log","info","warn","error"]) {
  };
 }
 for(const name of ["mousedown","mouseup"]) window.addEventListener(name,event=>evidence.trusted.push({type:name,trusted:event.isTrusted,onCanvas:event.target.id==="glcanvas"}));
+const activeTouches=new Set();
 window.syntheticTouch=(type,ids)=>{
+ for(const id of ids) {
+  if(type==="touchstart")activeTouches.add(id);
+  if(type==="touchend"||type==="touchcancel")activeTouches.delete(id);
+ }
  const event=new Event(type,{bubbles:true,cancelable:true});
- Object.defineProperty(event,"changedTouches",{value:ids.map(identifier=>({identifier,clientX:70,clientY:80}))});
+ const contacts=values=>Array.from(values,identifier=>({identifier,clientX:70,clientY:80}));
+ Object.defineProperties(event,{changedTouches:{value:contacts(ids)},touches:{value:contacts(activeTouches)}});
+ evidence.synthetic.push({kind:"touch",type,ids,touches:Array.from(activeTouches),trusted:false});
  document.querySelector("canvas").dispatchEvent(event);
 };
 window.inputSnapshot=()=>({flags:wasm_exports.input_flags(),x:wasm_exports.input_x(),y:wasm_exports.input_y(),
- focused:document.hasFocus(),locked:document.pointerLockElement===document.querySelector("canvas"),version:gl.getParameter(gl.VERSION),...evidence});
-window.syntheticMouse=(type,button=0,target=document.querySelector("canvas"))=>target.dispatchEvent(new MouseEvent(type,{bubbles:true,clientX:70,clientY:80,button}));
+ focused:document.hasFocus(),domFocused,visibility:document.visibilityState,locked:document.pointerLockElement===document.querySelector("canvas"),version:gl.getParameter(gl.VERSION),
+ scheduler:{pending:pendingFrames.size,requests:requestedFrames},...evidence});
+window.syntheticMouse=(type,button=0,target=document.querySelector("canvas"))=>{
+ evidence.synthetic.push({kind:"mouse",type,button,trusted:false});
+ return target.dispatchEvent(new MouseEvent(type,{bubbles:true,clientX:70,clientY:80,button}));
+};
+window.syntheticKey=target=>{
+ evidence.synthetic.push({kind:"keyboard",type:"keydown",code:"KeyA",trusted:false});
+ target.dispatchEvent(new KeyboardEvent("keydown",{code:"KeyA",bubbles:true}));
+};
+window.syntheticRawMotion=()=>{
+ evidence.synthetic.push({kind:"raw-motion",movementX:7,movementY:-3,trusted:false});
+ const event=new MouseEvent("mousemove",{clientX:600,clientY:600});Object.defineProperties(event,{movementX:{value:7},movementY:{value:-3}});
+ document.querySelector("canvas").dispatchEvent(event);
+};
 document.querySelector("canvas").addEventListener("contextmenu",event=>{event.preventDefault();evidence.contextMenus=(evidence.contextMenus||0)+1;});
 window.armGrab=()=>document.querySelector("canvas").addEventListener("mousedown",()=>wasm_exports.input_grab(true),{once:true});
 window.onerror=value=>evidence.errors.push(String(value));

@@ -1,5 +1,6 @@
 """Exercise immutable WebDriver snapshots and terminal fixture evidence."""
 import importlib.util
+import contextlib
 import json
 from pathlib import Path
 import subprocess
@@ -23,7 +24,7 @@ class BrowserRunner(unittest.TestCase):
         pending = iter(evidence)
         self.polls = 0
 
-        def request(_port, method, path, data=None):
+        def request(_port, method, path, data=None, timeout=30):
             if path == "/session":
                 return {"sessionId": "fixture"}
             if path.endswith("/execute/sync"):
@@ -35,7 +36,7 @@ class BrowserRunner(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="macroquad-audio-runner-") as directory:
             with patch.object(runner, "OUTPUT", Path(directory)), patch.object(runner, "request", request), \
-                    patch.object(runner.subprocess, "Popen"), patch.object(runner.time, "sleep"):
+                    patch.object(runner, "webdriver_process", return_value=contextlib.nullcontext(12345)), patch.object(runner.time, "sleep"):
                 try:
                     runner.check_browser("chrome", "http://fixture.invalid", marker=MARKER,
                                          check_ui=False, unlock_audio=unlock_audio, **kwargs)
@@ -94,13 +95,16 @@ process.stdout.write(JSON.stringify({old,current}));
     def old_v1():
         return {"messages": ["This fork requires the paired WebGL selection/antialias extension v2",
                              "RuntimeError: unreachable"], "errors": [], "completed": False,
-                "contextRequests": [], "resources": {"createdBuffers": 0}}
+                "contextRequests": [], "resources": {"createdBuffers": 0},
+                "expectedStartupErrors": ["RuntimeError: unreachable"]}
 
     def test_old_v1_requires_diagnostic_and_actual_trap_before_gpu_work(self):
         self.run_browser([self.old_v1()], expected_failure=old_v1_failure)
         for field, value in [("messages", [self.old_v1()["messages"][0]]),
                              ("messages", ["RuntimeError: unreachable"]),
                              ("contextRequests", [{"name": "webgl"}]),
+                             ("expectedStartupErrors", []),
+                             ("expectedStartupErrors", ["unrelated failure"]),
                              ("resources", {"createdBuffers": 1})]:
             with self.subTest(field=field, value=value):
                 evidence = {**self.old_v1(), field: value}

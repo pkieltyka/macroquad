@@ -16,9 +16,8 @@ import urllib.parse
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tests/browser_scene"))
 import ui_material_browser as driver
-from browser import sha256, source_identity
+from browser_scene.browser import sha256, source_identity
 
 
 def old_v1_failure(result):
@@ -27,6 +26,9 @@ def old_v1_failure(result):
         and "This fork requires the paired WebGL selection/antialias extension v2"
         in result["messages"]
         and any("RuntimeError: unreachable" in message for message in result["messages"])
+        and bool(result.get("expectedStartupErrors"))
+        and all(message in ("RuntimeError: unreachable", "RuntimeError: unreachable executed")
+                for message in result["expectedStartupErrors"])
         and result.get("completed") is False
         and result.get("contextRequests") == []
         and result.get("resources", {}).get("createdBuffers") == 0

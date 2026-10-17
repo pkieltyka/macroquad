@@ -13,23 +13,26 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(ROOT / "tests"))
+from browser_process import webdriver_process
 
 
-def request(port, method, path, data=None):
+def request(port, method, path, data=None, timeout=30):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}",
         data=None if data is None else json.dumps(data).encode(), method=method,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=30) as response:
+    with urllib.request.urlopen(req, timeout=timeout) as response:
         value = json.load(response)["value"]
     if isinstance(value, dict) and value.get("error"):
         raise RuntimeError(value)
@@ -52,36 +55,24 @@ def build(output, selection=False):
 
 
 def check(browser, base_url, output, expected_stale, runtime=None, selection=False):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
     if browser == "chrome":
         options = {"browserName": "chrome", "goog:chromeOptions": {
             "binary": os.environ.get("CHROME_BIN") or shutil.which("google-chrome") or shutil.which("chromium"),
             "args": ["--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
         }}
-        command = [os.environ.get("CHROMEDRIVER_BIN", "chromedriver"), f"--port={port}"]
+        command = [os.environ.get("CHROMEDRIVER_BIN", "chromedriver"), "--port=0"]
     else:
         options = {"browserName": "firefox", "moz:firefoxOptions": {
             "binary": os.environ.get("FIREFOX_BIN") or shutil.which("firefox"),
             "env": {"MOZ_ENABLE_WAYLAND": "0", "GDK_BACKEND": "x11"},
             "prefs": {"webgl.force-enabled": True},
         }}
-        command = [os.environ.get("GECKODRIVER_BIN", "geckodriver"), "--port", str(port)]
+        command = [os.environ.get("GECKODRIVER_BIN", "geckodriver"), "--port", "0"]
     session = None
-    with (output / f"{browser}-driver.log").open("w") as log:
-        driver = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+    with webdriver_process(browser, command, output / f"{browser}-driver.log", request) as port:
         try:
-            deadline = time.monotonic() + 15
-            while True:
-                try:
-                    request(port, "GET", "/status")
-                    break
-                except OSError:
-                    if driver.poll() is not None or time.monotonic() >= deadline:
-                        raise RuntimeError(f"{browser} driver did not start; see {log.name}")
-                    time.sleep(0.1)
             session = request(port, "POST", "/session", {"capabilities": {"alwaysMatch": options}})["sessionId"]
+            request(port, "POST", f"/session/{session}/timeouts", {"script": 15000, "pageLoad": 15000, "implicit": 0})
             cases = [("webgl1", "webgl1", 1, None, None), ("webgl2", "webgl2", 2, None, None)]
             if selection:
                 cases += [("auto", "auto", 2, None, None), ("fallback", "auto", 1, "webgl2", None),
@@ -101,7 +92,8 @@ def check(browser, base_url, output, expected_stale, runtime=None, selection=Fal
                 request(port, "POST", f"/session/{session}/url", {"url": url})
                 deadline = time.monotonic() + 30
                 while True:
-                    evidence = request(port, "POST", f"/session/{session}/execute/sync", {"script": "return window.evidence", "args": []})
+                    serialized = request(port, "POST", f"/session/{session}/execute/sync", {"script": "return window.evidence ? JSON.stringify(window.evidence) : null", "args": []})
+                    evidence = json.loads(serialized) if serialized is not None else None
                     if evidence and (evidence["errors"] or evidence["completed"]):
                         break
                     if time.monotonic() >= deadline:
@@ -133,13 +125,7 @@ def check(browser, base_url, output, expected_stale, runtime=None, selection=Fal
         finally:
             if session:
                 with contextlib.suppress(Exception):
-                    request(port, "DELETE", f"/session/{session}")
-            driver.terminate()
-            try:
-                driver.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                driver.kill()
-                driver.wait()
+                    request(port, "DELETE", f"/session/{session}", timeout=3)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):

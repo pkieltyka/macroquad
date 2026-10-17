@@ -1,7 +1,11 @@
 # Maintaining the Zubspace fork
 
-This fork serves Zubspace rather than preserving Macroquad's full upstream API
-and platform matrix. The GitHub-only fork package is Macroquad 0.5.0, based on
+This fork prioritizes HTML5 browser games, including Zubspace, using WASM and
+WebGL1/2. Chrome and Firefox are the primary browser targets across modern
+operating systems: Windows, macOS, Linux and other OS environments providing
+the required WebAssembly, WebGL and browser audio capabilities. Native Linux is
+a secondary development/test path. The fork retains a narrower API and native
+platform matrix than upstream. The GitHub-only package is Macroquad 0.5.0, based on
 upstream Macroquad 0.4.16 with vendored Miniquad 0.4.11. Pin the full release
 Git revision and paired JavaScript, rather than a registry version. Rust 1.88 is
 the declared minimum, including the image 0.25.10 dependency. See
@@ -12,13 +16,20 @@ the declared minimum, including the image 0.25.10 dependency. See
 
 | Configuration | Contract |
 | --- | --- |
-| Linux X11/OpenGL, no default features | Primary native configuration, including Zubspace game/server tests. Audio uses the dummy backend. |
-| Linux X11/OpenGL, `audio` | Must compile; native audio decoding remains quad-snd's behavior. This is not a claim of full hardware/audio-device coverage. |
-| `wasm32-unknown-unknown`, `audio`, WebGL1/2 | Primary browser configuration. Requires the paired runtime, genuine imports and browser acceptance below. |
-| Other operating systems, Metal, Wayland or alternate native backends | Outside this fork's supported matrix. Retained upstream source is not a support promise. |
+| `wasm32-unknown-unknown`, `audio`, WebGL1/2 | Primary product target: HTML5 games in Chrome/Firefox across capable operating systems. Uses this fork's included matching runtime and genuine imports. |
+| Linux X11/OpenGL, no default features | Secondary native development/test configuration, including historical Zubspace game/server tests. Audio uses the dummy backend. |
+| Linux X11/OpenGL, `audio` | Secondary compile target; native audio decoding remains quad-snd's behavior. Full hardware/audio-device coverage is not established. |
+| Other native operating systems, Metal, Wayland or alternate native backends | Outside the current native support matrix. This does not restrict the operating systems hosting browser WASM. Retained upstream source is not a native support promise. |
+
+Browser fixtures and the historical application acceptance documented here ran
+on Linux hosts with Chrome/Firefox. Cross-OS browser intent does not establish
+Windows/macOS, Safari, mobile or every device/driver as independently validated.
+The [browser roadmap](browser-roadmap.md) records pending qualification,
+lifecycle/input and measurement priorities after 0.5.0.
 
 Window startup permits one initialization attempt per process, and rejects
-unsupported platforms and Linux configurations other than X11. Native graphics
+unsupported native platforms and native Linux configurations other than X11.
+Those native guards do not impose an OS restriction on browser WASM. Native graphics
 tests use fresh processes rather than resetting Miniquad's global display.
 Browser WebGL1 omits MSAA resolves; WebGL2 and native GL exercise them where
 supported. Software-rendered/Xvfb fixtures do not establish physical-GPU coverage
@@ -123,10 +134,34 @@ gh workflow run rust.yml --repo pkieltyka/macroquad --ref master
 
 Manual dispatch becomes available once this workflow is on the default branch;
 `--ref` selects the branch or tag to check. These events run the validation jobs.
-Install Linux X11/GL development libraries, ALSA development libraries for native
-audio, Xvfb and the WASM Rust target. Browser fixtures additionally require
-Chrome/chromedriver and Firefox/geckodriver with a working graphics display.
-Use Python 3.12+ and Git for vendor reconstruction. From this repository:
+The primary release gate is the workflow's `browser` job. On Ubuntu 24.04 it
+provisions Chrome/ChromeDriver 155.0.8059.79, Firefox 158.0 and GeckoDriver 0.37.1
+through setup Actions pinned by commit, Node 22, stable Rust with the WASM target,
+Xvfb and Openbox. The serial runner records actual tool versions and artifact
+hashes beneath `target/browser-release/`; CI uploads its finite JSON/log evidence.
+Chrome uses SwiftShader; Firefox runs on the isolated display with software GL.
+This is Linux-hosted library validation, not cross-OS or physical-GPU acceptance.
+
+With those browser/driver/display tools, Python 3.12+, Node 22+ and the WASM Rust
+target available locally, run the same gate from the fork root:
+
+```sh
+xvfb-run -a bash tests/browser_release.sh
+```
+
+It builds the finite WASM examples, checks genuine imports/ABIs, then runs
+audio resumption from a controlled suspended context after a trusted WebDriver
+gesture, decode/cancellation, graphics ownership, UI and codec fixtures in
+Chrome and Firefox. Those runtime fixtures use their existing WebGL1 default;
+the texture/pass fixture explicitly runs both WebGL1 and WebGL2 with the shipped
+runtime in each browser. Both WebGL paths remain supported; no WebGL2 requirement
+or automatic selection is introduced by this validation setup. Audio evidence
+observes the actual decoding context's runtime `resume()` call and later running
+state; it does not qualify every browser autoplay-policy setting or audio device.
+
+The existing native, MSRV and Miri jobs provide supporting shared-Rust/backend
+correctness evidence. For those checks install Linux X11/GL development libraries,
+ALSA development libraries for native audio, Xvfb and Git for vendor reconstruction:
 
 ```sh
 python3 tools/vendor_miniquad.py

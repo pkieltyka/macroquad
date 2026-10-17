@@ -1,10 +1,20 @@
 # Macroquad for Zubspace
 
 This is `pkieltyka/macroquad`, a deliberately narrower fork of
-[Macroquad](https://github.com/not-fl3/macroquad) for Zubspace. It requires
-**Rust 1.88+** and supports **Linux X11/OpenGL** and **browser WASM/WebGL1/2**.
+[Macroquad](https://github.com/not-fl3/macroquad) for **HTML5 browser games using
+WASM and WebGL1/2**, including Zubspace. **Chrome and Firefox** are the primary
+browser targets, intended to run on Windows, macOS, Linux and other modern
+operating systems with the required WebAssembly, WebGL and browser audio capabilities.
+Building the Rust code requires **Rust 1.88+**.
+
+Current browser fixtures run on Linux with Chrome and Firefox; they do not
+establish testing across every OS, device or GPU, or Safari/mobile acceptance.
+Native Linux X11/OpenGL is a secondary development and test path.
+The release workflow includes real Chrome/Firefox WASM fixtures, with explicit
+WebGL1 and WebGL2 graphics coverage, alongside shared Rust correctness checks.
 Release **0.5.0** is distributed through [GitHub releases](https://github.com/pkieltyka/macroquad/releases/tag/zubspace-v0.5.0),
-with its paired JavaScript runtime included in this source tree and as a release asset.
+with its matching fork-owned JavaScript runtime included in this source tree and
+as a release asset. Consumers do not need private Zubspace runtime files.
 The upstream Rust/runtime base is 0.4.16; the patched vendored Miniquad is 0.4.11.
 This GitHub-only fork retains the package name `macroquad` and disables crates.io
 publication. Pin the full release commit from `release-manifest.json`:
@@ -15,6 +25,7 @@ Local remediation and regression evidence do not establish an official RustSec
 patched release, a clean dependency audit, or a measured performance improvement.
 
 - [Supported APIs, build matrix, updates and rollback](docs/fork.md)
+- [Pending browser priorities after 0.5.0](docs/browser-roadmap.md)
 - [Security contracts and remaining boundaries](docs/security.md)
 - [Upstream remediation explanation](docs/upstream-remediation.md)
 - [Patch attribution and decisions](docs/patch-ledger.md)

@@ -1,15 +1,33 @@
 <!doctype html>
 <canvas id="glcanvas" width="800" height="600" tabindex="1"></canvas>
+<script src="/tests/audio_unlock_gate.js"></script>
 <script>
-window.evidence = { messages: [], errors: [], allocated: [], deleted: [], audioInitialized: false };
+window.evidence = { messages: [], errors: [], allocated: [], deleted: [], audioInitialized: false, decodeContextCalls: 0 };
+const contexts = [];
+const NativeAudioContext = window.AudioContext || window.webkitAudioContext;
+function ObservedAudioContext(...args) {
+    const context = new NativeAudioContext(...args);
+    contexts.push(context);
+    return context;
+}
+ObservedAudioContext.prototype = NativeAudioContext.prototype;
+window.AudioContext = ObservedAudioContext;
+let audioUnlockGate, completedMessage;
+function acceptCompleted() {
+    if (!completedMessage || !audioUnlockGate?.complete()) return;
+    window.validateCompleted();
+    evidence.messages.push(completedMessage);
+    completedMessage = null;
+}
+document.addEventListener("mousedown", event => audioUnlockGate?.gesture(event), true);
 for (const type of ["log", "info", "warn", "error"]) {
     const original = console[type];
     console[type] = (...args) => {
         const message = args.join(" ");
         if (message.includes("audio lifecycle regression: passed")) {
             setTimeout(() => {
-                window.validateCompleted();
-                evidence.messages.push(message);
+                completedMessage = message;
+                acceptCompleted();
             }, 500);
         } else {
             evidence.messages.push(message);
@@ -35,12 +53,24 @@ window.onunhandledrejection = event => evidence.errors.push(String(event.reason)
             if (typeof env[name] !== "function") throw new Error(`Missing genuine audio import ${name}`);
         }
         const init = env.audio_init;
-        env.audio_init = () => { init(); evidence.audioInitialized = true; };
+        env.audio_init = () => {
+            const first = contexts.length;
+            init();
+            if (!audioUnlockGate) {
+                const context = contexts[first];
+                if (!context) throw new Error("Runtime audio context was not captured");
+                audioUnlockGate = createAudioUnlockGate(context, evidence, acceptCompleted);
+                const decode = context.decodeAudioData.bind(context);
+                context.decodeAudioData = (...args) => { evidence.decodeContextCalls++; return decode(...args); };
+            }
+            evidence.audioInitialized = true;
+        };
         const add = env.audio_add_buffer;
         env.audio_add_buffer = (...args) => { const id = add(...args); evidence.allocated.push(id); return id; };
         const remove = env.audio_source_delete;
         env.audio_source_delete = id => { evidence.deleted.push(id); remove(id); };
         window.validateCompleted = () => {
+            if (evidence.decodeContextCalls !== 4) evidence.errors.push("Did not observe all decodes on the captured runtime context");
             const allocated = [...evidence.allocated].sort((a, b) => a - b);
             const deleted = [...evidence.deleted].sort((a, b) => a - b);
             if (allocated.length !== 4 || JSON.stringify(allocated) !== JSON.stringify(deleted)) {

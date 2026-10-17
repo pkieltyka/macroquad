@@ -8,7 +8,9 @@ The fork's Rust source base is `8d602d3f8ebb8a3a582ee15d92983bbb81ee3ef6`;
 the published runtime aggregate has its separate 0.4.16 crate VCS provenance.
 
 This release names the constrained fork API and makes its paired browser runtime
-public and reproducible. It includes the reviewed image invariants/codec update,
+public and reproducible for HTML5 browser games. The matching runtime is included
+in the fork and release assets; private Zubspace JavaScript is not required.
+It includes the reviewed image invariants/codec update,
 scoped graphics/UI ownership, resource and coroutine lifetimes, terminal audio
 decode/cancellation, and CPU telemetry changes. See the source tree's
 `docs/fork.md`, `docs/security.md` and `docs/patch-ledger.md` for migrations,
@@ -38,11 +40,22 @@ Runtime SHA-256: `c4cc9799355e046d0fef61e1078e5524b08e0516fb914246b9808c0d80d367
 `audio_source_state` extension v1. Do not substitute an upstream hosted bundle.
 Upgrade/roll back the Git pin, lockfile and runtime together.
 
-Requires Rust 1.88+. Supported scope: Linux X11/OpenGL without default features
-or with optional audio, and browser WASM/WebGL1/2 with audio. Other retained
-platform sources are outside the support matrix. Finite native and browser
-regressions validate library behavior; hardware audio/GPU coverage is limited.
+Requires Rust 1.88+. The primary product target is HTML5 games using
+`wasm32-unknown-unknown`, WebGL1/2 and browser audio in Chrome/Firefox, intended
+across Windows, macOS, Linux and other modern OS environments with those browser
+capabilities. Actual browser fixtures ran on Linux hosts; cross-OS, Safari and
+mobile acceptance are not established by those runs. Linux X11/OpenGL without
+default features or with optional audio remains a secondary development/test
+path. Other native backends are outside the current native support matrix.
+Finite regressions validate library behavior; hardware audio/GPU coverage is limited.
+The public release workflow includes a serial real-browser WASM job for
+Chrome/Firefox: audio, ownership, UI and codecs on their existing WebGL1 path,
+plus explicit WebGL1 and WebGL2 texture/pass regressions using the included
+runtime. Native/MSRV/Miri checks support shared-code correctness. This does not
+claim new cross-OS, Safari/mobile or game acceptance, or automatic WebGL selection.
 GPU timing and graphics-context restoration are unavailable.
+The source's `docs/browser-roadmap.md` records pending post-0.5.0 browser
+qualification and robustness work; this release does not claim those outcomes.
 
 This is local remediation, not an official RustSec patched release or a clean
 audit claim. The ttf-parser maintenance advisory remains; dependency deferrals

@@ -1,11 +1,18 @@
 # Supported fork surface and soundness remediation
 
-This fork serves Zubspace. Browser WASM with `audio` is primary; Linux native
-builds without audio support the game and server tests. Native audio must still
-compile. The native window backend is X11 with OpenGL (GLX/EGL); browser
-WebGL1/2 are supported. Window initialization rejects Wayland and other native
-OS targets before entering Miniquad. Companion crates remain build targets but
-are not independently release-supported.
+This fork prioritizes HTML5 games, including Zubspace, using browser WASM,
+WebGL1/2 and `audio`. Chrome/Firefox are the primary browser targets across
+modern OS environments with the required browser capabilities, including
+Windows, macOS and Linux. Actual browser fixtures and historical application
+acceptance ran on Linux hosts; this does not establish Safari, mobile or all
+OS/device/driver combinations as validated. See the [support scope](fork.md).
+
+Native Linux is a secondary development/test path. Builds without audio support
+the game/server tests; native audio must still compile. The native window
+backend is X11 with OpenGL (GLX/EGL). Window initialization rejects Wayland and
+other native OS targets before entering Miniquad; these native guards do not
+restrict the OS hosting a browser WASM build. Companion crates remain build
+targets but are not independently release-supported.
 
 The tested source revision is
 [`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271`](https://github.com/pkieltyka/macroquad/tree/ea02ddd91439fb1c5024f0dc062c6a04b1f3d271),
@@ -81,7 +88,7 @@ attachment, independently of externally mutable `RenderTarget` fields.
 The vendored backend's render-pass deletion releases only FBOs. Attachments are
 released by their explicit owners; a texture clone remains valid after its
 render target/pass is dropped. This matches the dependency's Metal ownership
-convention, although Metal is not a supported runtime target of this fork.
+convention, although Metal is not a supported native backend of this fork.
 Snapshot caches release replaced textures/FBOs and use a resolved color texture
 when sampling an MSAA target. Unsupported multisampling is rejected from backend
 capabilities before allocation; WebGL1 does not silently enter MSAA calls.
@@ -156,8 +163,9 @@ owns the ID directly; it does not read quad-snd private fields. Failed or
 cancelled loads release their source. The paired JS runtime must copy encoded
 input synchronously, prevent deleted sources from being resurrected by late
 callbacks, and handle both callback and Promise rejection from `decodeAudioData`.
-Zubspace's runtime provenance/import gate must require this extension when
-pinning the fork. Older JavaScript bundles are not compatible with this WASM.
+The included fork runtime implements this extension, and its import gate checks
+the pairing. Downstream application provenance/import gates must require the
+extension when pinning the fork. Older bundles are not compatible with this WASM.
 
 Native `#[macroquad::test]` cases run in fresh exact-selected harness processes.
 The parent verifies that the requested child test actually entered, so a missing
@@ -317,7 +325,11 @@ clocks/unwind, thread shutdown and pending/failed/completed audio ownership.
 `tests/audio_lifecycle_regression.html` exercise the paired WASM imports through
 real decoding, failure, pending cancellation, last-clone drop and cancellation
 of an unclaimed completed sound. The browser fixture checks each allocated
-source is deleted once and remains deleted after late callbacks. Run it with
+source is deleted once and remains deleted after late callbacks. It captures the
+actual decoding context, establishes a controlled suspended state, and requires
+a trusted WebDriver gesture followed by the runtime's real `resume()` call and
+a running `statechange` before reporting completion. This tests resumption from
+controlled suspension, not every browser autoplay policy or audio device. Run it with
 `tests/ui_material_browser.py --fixture tests/audio_lifecycle_regression.html
 --marker "audio lifecycle regression: passed" --runtime js/mq_js_bundle.js
 --output target/audio-lifecycle-browser --unlock-audio --timeout 90` after building the example

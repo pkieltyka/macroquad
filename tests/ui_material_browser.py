@@ -44,6 +44,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+def validate_audio_unlock(result, gesture_sent):
+    audio = result.get("audioUnlock") or {}
+    if not gesture_sent or not audio.get("trustedGesture"):
+        raise AssertionError("Audio fixture completed before the trusted unlock gesture")
+    if not (audio.get("suspendedBeforeGesture") and audio.get("runningAfterTrustedGesture")
+            and audio.get("state") == "running"
+            and 0 < audio.get("gestureSequence", 0) < audio.get("resumeSequence", 0) < audio.get("runningSequence", 0)):
+        raise AssertionError("Audio context did not resume to running after the trusted gesture")
+
+
 def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30):
     driver_env = os.environ.copy()
     with socket.socket() as sock:
@@ -88,14 +98,18 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
                 result = request(port, "POST", f"/session/{session}/execute/sync", {
                     "script": "return window.evidence && Object.assign({}, window.evidence, {visibility: document.visibilityState})", "args": [],
                 })
-                if unlock_audio and result and result.get("audioInitialized") and not unlocked:
+                completed = result and any(marker in m for m in result["messages"])
+                if unlock_audio and completed:
+                    (OUTPUT / f"{browser}.json").write_text(json.dumps(result, indent=2) + "\n")
+                    validate_audio_unlock(result, unlocked)
+                if unlock_audio and not completed and result and result.get("audioUnlock", {}).get("ready") and not unlocked:
                     request(port, "POST", f"/session/{session}/actions", {"actions": [{
                         "type": "pointer", "id": "audio-unlock", "parameters": {"pointerType": "mouse"},
                         "actions": [{"type": "pointerMove", "x": 20, "y": 20, "duration": 0},
                                     {"type": "pointerDown", "button": 0}, {"type": "pointerUp", "button": 0}],
                     }]})
                     unlocked = True
-                if result and (result["errors"] or any(marker in m for m in result["messages"])):
+                if result and (result["errors"] or completed):
                     break
                 if time.monotonic() >= deadline:
                     (OUTPUT / f"{browser}.json").write_text(json.dumps(result, indent=2) + "\n")
@@ -106,8 +120,8 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
                 raise AssertionError(result)
             if check_ui and (result["phases"][0]["uiShaders"] != 0 or result["uiShaders"] != 1):
                 raise AssertionError(result)
-            if unlock_audio and not unlocked:
-                raise AssertionError("Audio fixture completed before the trusted unlock gesture")
+            if unlock_audio:
+                validate_audio_unlock(result, unlocked)
             print(f"{browser}: passed; {marker}", flush=True)
         finally:
             if session:

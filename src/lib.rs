@@ -5,8 +5,10 @@
 //!
 //! ## Supported platforms
 //!
-//! * Linux with OpenGL
-//! * Browser WASM with WebGL (the paired fork runtime is required for audio)
+//! * Primary: HTML5 browser games using WASM/WebGL1/2 and the included matching runtime.
+//!   Chrome/Firefox target capable modern OS environments, including Windows, macOS and Linux.
+//!   Actual browser fixtures run on Linux; Safari/mobile and every OS/device are not validated.
+//! * Secondary development/test path: native Linux X11 with OpenGL.
 //!
 //! ## Features
 //!
@@ -14,7 +16,7 @@
 //! * Efficient 2D rendering with automatic geometry batching
 //! * Minimal amount of dependencies: build after `cargo clean` takes only 16s on x230(~6years old laptop)
 //! * Immediate mode UI library included
-//! * Single command deploy for both WASM and Android [build instructions](https://github.com/not-fl3/miniquad/#building-examples)
+//! * HTML5 deployment with WASM, WebGL and the included matching JavaScript runtime
 //! # Example
 //! ```no_run
 //! use macroquad::prelude::*;

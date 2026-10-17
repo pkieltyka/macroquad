@@ -23,8 +23,11 @@ different commit. It records the exact commit, vendored tree/patch and every
 runtime input, creates deterministic source/runtime tarballs, and fills the
 reviewed release notes template with concrete commit and asset checksums.
 `SHA256SUMS` hashes notes and the manifest too; it intentionally excludes itself.
-Run the existing public CI on the final pushed commit and require every job to
-pass before publication. Push without force; create an annotated tag only if it
+Run the public CI on the final pushed commit and require every job to pass before
+publication, including the real Chrome/Firefox WASM browser job with explicit
+WebGL1/2 graphics and runtime audio/UI/ownership/codec fixtures. The shared Rust,
+MSRV and Miri jobs remain supporting correctness gates. Push without force;
+create an annotated tag only if it
 does not already exist, and verify the remote commit before release creation:
 
 ```sh

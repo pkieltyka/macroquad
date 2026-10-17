@@ -1,6 +1,7 @@
 # Paired browser runtime
 
-`mq_js_bundle.js` is the runtime paired with Zubspace Macroquad **0.5.0**.
+`mq_js_bundle.js` is the included, fork-owned runtime paired with Macroquad
+**0.5.0** for HTML5/WASM/WebGL games. It requires no private Zubspace files.
 It is generated from the published upstream **0.4.16** aggregate plus the
 reviewed local fixes, including `audio_source_state` extension v1. Miniquad's
 Rust dependency remains the locally patched **0.4.11** source.

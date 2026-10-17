@@ -8,6 +8,60 @@ permissions:
   contents: read
 
 jobs:
+  browser:
+    name: Browser WASM WebGL1/2 (Chrome and Firefox)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install browser display and software graphics dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox libgl1-mesa-dri libegl1 libgtk-3-0t64 libdbus-glib-1-2 libasound2t64
+      - name: Install the WASM compiler target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable wasm32-unknown-unknown
+      - name: Install matched Chrome and ChromeDriver
+        id: chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2
+        with:
+          chrome-version: 155.0.8059.79
+          install-chromedriver: true
+      - name: Install Firefox
+        id: firefox
+        uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1
+        with:
+          firefox-version: "158.0"
+      - name: Install GeckoDriver
+        uses: browser-actions/setup-geckodriver@fac5b0424c584257f32cf12c5eb4ba86014c34f8 # latest reviewed 2026-10-17
+        with:
+          geckodriver-version: 0.37.1
+          token: ${{ github.token }}
+      - name: Run finite browser graphics and audio release gates serially
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          CHROMEDRIVER_BIN: ${{ steps.chrome.outputs.chromedriver-path }}
+          FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
+        run: xvfb-run -a bash tests/browser_release.sh
+      - name: Preserve finite browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-release-evidence
+          path: |
+            target/browser-release/**/*.json
+            target/browser-release/**/*.log
+            target/browser-release/environment.txt
+            target/browser-release/checksums.sha256
+          if-no-files-found: warn
+
   supported:
     runs-on: ubuntu-latest
     steps:
@@ -19,6 +73,8 @@ jobs:
         run: |
           node tools/regenerate_browser_runtime.mjs --check
           node --test tests/browser_runtime.test.mjs
+          node --test tests/audio_unlock_gate.test.mjs
+          python3 tests/test_browser_audio_gate.py
           python3 tests/test_prepare_release.py
       - name: Install native graphics and audio dependencies
         run: |

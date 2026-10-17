@@ -64,6 +64,8 @@ jobs:
 
   supported:
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -80,7 +82,7 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt
           rustup target add --toolchain stable wasm32-unknown-unknown
       - name: Format fork code and patched backend files
-        run: make check-format CARGO='cargo +stable' RUSTFMT='rustfmt +stable'
+        run: make check-format
       - name: Verify the published backend source and narrow patch
         run: make check-vendor
       - name: Check backend cache and property boundaries
@@ -90,7 +92,7 @@ jobs:
       - run: cargo +stable check --all-targets --no-default-features
       - run: cargo +stable check --all-targets --features audio
       - name: Check both supported WASM feature configurations
-        run: make build CARGO='cargo +stable'
+        run: make build
       - name: Link browser lifecycle fixtures
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C link-arg=--allow-undefined"

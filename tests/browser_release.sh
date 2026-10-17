@@ -29,6 +29,10 @@ mkdir -p "$output"
 } > "$output/environment.txt"
 
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-} -C link-arg=--allow-undefined"
+# Clean clones omit the ignored lockfile. Preserve an existing developer lock.
+if [[ ! -f Cargo.lock ]]; then
+    cargo generate-lockfile
+fi
 node tools/check_browser_runtime.mjs --source-only
 if [[ "$mode" == full ]]; then
     cargo build --target wasm32-unknown-unknown --features audio \

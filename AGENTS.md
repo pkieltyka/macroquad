@@ -28,6 +28,9 @@ missing prerequisites into a reported pass.
 - Rust 1.88+ with `wasm32-unknown-unknown` and rustfmt, Node22+, Python3.12+,
   GNU Make, Git and standard shell utilities. Vendor verification downloads the
   pinned published crate and checks its hash; it needs network access.
+  With rustup, select a toolchain through `RUSTUP_TOOLCHAIN=stable` (as CI does).
+  Keep `CARGO`/`RUSTFMT` overrides as executable paths, not commands with arguments;
+  Cargo itself reads the exported `RUSTFMT` value.
 - Browser commands need Xvfb, Openbox, Chrome with matching ChromeDriver, Firefox,
   GeckoDriver and Linux graphics libraries. Public CI pins Chrome/ChromeDriver
   155.0.8059.79, Firefox158.0 and GeckoDriver0.37.1. Override `CHROME_BIN`,
@@ -53,6 +56,8 @@ GL/pixel results and JSON/driver logs. Full scene evidence includes raw repeated
 CPU/cadence samples, renderer/source/build identity and PNGs. GPU timing is
 unsupported/null; timings are diagnostic with no machine-dependent threshold or
 automatic FPS-improvement claim. See [scene limits](docs/browser-scene.md).
+The source-pairing gate needs a resolved root lockfile. Browser commands generate
+the ignored `Cargo.lock` only when it is absent and preserve an existing lock.
 
 ## CI and release policy
 

@@ -45,6 +45,19 @@ function listeners() {
   };
 }
 
+function assertUnpatchedRegistrarDefect(bundle) {
+  let runtime;
+  try {
+    runtime = createRuntime({ ...sources, bundle });
+  } catch (error) {
+    assert.equal(error.name, "ReferenceError");
+    assert.equal(error.message, "register_plugin is not defined");
+    return;
+  }
+  // Node 22's VM leaks the undeclared assignment; Node 26 rejects it instead.
+  assert.equal(typeof runtime.register_plugin, "function");
+}
+
 test("vendored base and deterministic patches reproduce the checked-in bundle", () => {
   assert.equal(sha256(base), "4bf663a44a06c113bed92e0596c58139cd9db7f0d67ef2cc49ca06016e0b5ea0");
   assert.equal(regenerateBundle(base), sources.bundle);
@@ -58,8 +71,17 @@ test("the complete strict-mode bundle boots and registers all plugins without le
   assert.equal(runtime.register_plugin, undefined);
   assert.equal(typeof runtime.importObject.env.audio_init, "function");
   assert.equal(typeof runtime.importObject.env.ws_connect, "function");
-  // This is the actual startup failure in the unpatched published 0.4.16 file.
-  assert.throws(() => createRuntime({ ...sources, bundle: base }), /register_plugin is not defined/);
+  assertUnpatchedRegistrarDefect(base);
+});
+
+test("the upstream negative control rejects unrelated startup errors and a leak-free runtime", () => {
+  for (const bundle of [
+    'throw new Error("register_plugin is not defined");',
+    'throw new ReferenceError("unrelated startup failure");',
+    sources.bundle,
+  ]) {
+    assert.throws(() => assertUnpatchedRegistrarDefect(bundle), assert.AssertionError);
+  }
 });
 
 test("a missing canvas is created, focusable, and appended before the bundle uses it", () => {

@@ -63,7 +63,11 @@ if [[ "$mode" == full ]]; then
     python3 tests/ui_material_browser.py --fixture tests/image_codec_regression.html \
         --marker 'image codec regression: passed' --output "$output/codecs" --timeout 60
 fi
-python3 tests/browser_capacity/browser.py --output "$output/capacity"
+if [[ "$mode" == full ]]; then
+    python3 tests/browser_capacity/browser.py --attributes --output "$output/capacity"
+else
+    python3 tests/browser_capacity/browser.py --output "$output/capacity"
+fi
 python3 tests/texture_cache/browser.py --wasm-dir "$output/webgl" --runtime js/mq_js_bundle.js --selection
 # The browser checks actual imports, including its genuine glGetError adapter.
 if [[ "$mode" == full ]]; then

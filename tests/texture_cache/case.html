@@ -63,9 +63,9 @@ importObject.env.glBindTexture = (target, id) => {
     originalBind(target, id);
 };
 const originalInit = importObject.env.init_webgl;
-importObject.env.init_webgl = version => {
+importObject.env.init_webgl = (version, antialias) => {
     evidence.requestedMode = version;
-    try { originalInit(version); }
+    try { originalInit(version, antialias); }
     catch (error) { evidence.startupError = String(error); throw error; }
     evidence.version = gl instanceof WebGL2RenderingContext ? 2 : 1;
     evidence.renderer = gl.getParameter(gl.RENDERER);

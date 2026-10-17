@@ -16,7 +16,7 @@ targets but are not independently release-supported.
 
 Browser context selection defaults to Auto (WebGL2 first, WebGL1 only on
 context-creation failure), with strict explicit1/2 requests. The current Rust
-requires `webgl_selection_version` extension v1 before context/GPU setup;
+requires `webgl_selection_version` extension v2 before context/GPU setup;
 legacy Miniquad ABI2 and audio ABI1 remain unchanged. Missing/unsupported
 selection contracts and unavailable contexts fail rather than fabricating
 capabilities. The owned GL version and MSAA/format capabilities come from the

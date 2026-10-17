@@ -1,15 +1,20 @@
 --- a/js/gl.js
 +++ b/js/gl.js
-@@ -25,8 +25,28 @@
+@@ -24,9 +24,32 @@
+ // if false, requestAnimationFrame will be called at the end of each frame
  var blocking_event_loop = false;
 
- function init_webgl(version) {
+-function init_webgl(version) {
++function init_webgl(version, antialias) {
 +    if (version !== 0 && version !== 1 && version !== 2) {
 +        throw new RangeError("Unsupported WebGL request: " + version);
 +    }
++    if (antialias !== 0 && antialias !== 1) {
++        throw new RangeError("Unsupported WebGL antialias request: " + antialias);
++    }
 +    function createContext(name) {
 +        try {
-+            return canvas.getContext(name);
++            return canvas.getContext(name, { antialias: antialias === 1 });
 +        } catch (error) {
 +            return null;
 +        }
@@ -30,7 +35,7 @@
 
          function acquireVertexArrayObjectExtension(ctx) {
              // Extension available in WebGL 1 from Firefox 25 and WebKit 536.28/desktop Safari 6.0.3 onwards. Core feature in WebGL 2.
-@@ -88,11 +108,39 @@
+@@ -88,11 +111,39 @@
              alert("Cant initialize WEBGL_depth_texture extension");
          }
      } else {
@@ -75,7 +80,7 @@
  }
 
  canvas.focus();
-@@ -1176,41 +1224,13 @@
+@@ -1176,41 +1227,13 @@
              resize(canvas);
          },
          run_animation_loop: function (blocking) {
@@ -118,7 +123,7 @@
              canvas.onkeydown = function (event) {
                  var sapp_key_code = into_sapp_keycode(event.code);
                  switch (sapp_key_code) {
-@@ -1369,6 +1389,7 @@
+@@ -1369,6 +1392,7 @@
                  // However, the document becomes invisible
                  let hasFocus = document.hasFocus() && document.visibilityState == "visible";
                  if (lastFocus != hasFocus) {
@@ -126,13 +131,13 @@
                      wasm_exports.focus(hasFocus);
                      lastFocus = hasFocus;
                  }
-@@ -1458,7 +1479,8 @@
+@@ -1458,7 +1482,8 @@
              }
              animation_frame_timeout = window.requestAnimationFrame(animation);
          },
 -        init_webgl
 +        init_webgl,
-+        webgl_selection_version: function () { return 1; }
++        webgl_selection_version: function () { return 2; }
      }
  };
 
@@ -145,7 +150,7 @@
 -    /// Use WebGL 1.0. This is the default choice.
 -    #[default]
 +    /// Prefer WebGL 2.0; fall back to WebGL 1.0 only if context creation fails.
-+    /// Requires the fork's paired JavaScript selection extension v1.
++    /// Requires the fork's paired JavaScript selection/antialias extension v2.
 +    #[default]
 +    Auto,
 +    /// Require WebGL 1.0 without trying WebGL 2.0.
@@ -164,9 +169,19 @@
      pub webgl_version: WebGLVersion,
 
      /// Defines which rendering API to use on Apple platforms (Metal or OpenGL).
+@@ -225,6 +228,9 @@
+
+     /// MSAA sample count.
+     /// Defaults to `1`.
++    /// On WebGL, values <= 1 request antialiasing off and values > 1 request it
++    /// on. The browser chooses the actual technique/sample count and may not
++    /// provide antialiasing; an exact sample count cannot be requested.
+     pub sample_count: i32,
+
+     /// If `true`, the user can resize the window.
 --- a/src/native/wasm.rs
 +++ b/src/native/wasm.rs
-@@ -66,10 +66,16 @@
+@@ -66,11 +66,26 @@
      }
 
      let version = match conf.platform.webgl_version {
@@ -175,18 +190,31 @@
          crate::conf::WebGLVersion::WebGL2 => 2,
      };
      unsafe {
+-        init_webgl(version);
++        let extension_version = webgl_selection_version();
++        if extension_version != 2 {
++            // The generic panic hook logs debug payloads, so give a clear
++            // pairing diagnostic before rejecting the old initializer contract.
++            console_log(
++                b"This fork requires the paired WebGL selection/antialias extension v2\0"
++                    .as_ptr()
++                    .cast(),
++            );
++        }
 +        assert_eq!(
-+            webgl_selection_version(),
-+            1,
-+            "This fork requires the paired WebGL selection extension v1"
++            extension_version, 2,
++            "This fork requires the paired WebGL selection/antialias extension v2"
 +        );
-         init_webgl(version);
++        init_webgl(version, i32::from(conf.sample_count > 1));
      }
 
-@@ -138,6 +144,7 @@
+     // setup initial canvas size
+@@ -137,7 +152,8 @@
+     pub fn sapp_is_fullscreen() -> bool;
      pub fn sapp_set_window_size(new_width: u32, new_height: u32);
      pub fn sapp_schedule_update();
-     pub fn init_webgl(version: i32);
+-    pub fn init_webgl(version: i32);
++    pub fn init_webgl(version: i32, antialias: i32);
 +    pub fn webgl_selection_version() -> u32;
      pub fn now() -> f64;
  }

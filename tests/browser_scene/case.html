@@ -129,8 +129,8 @@ try {
     // The shipped wall clock is millisecond-quantized. Keep runtime bytes intact
     // and use the browser's monotonic clock only inside this diagnostic fixture.
     importObject.env.now = () => performance.now() / 1000;
-    importObject.env.init_webgl = requested => {
-        initialize(requested);
+    importObject.env.init_webgl = (requested, antialias) => {
+        initialize(requested, antialias);
         const extension = gl.getExtension("WEBGL_debug_renderer_info");
         evidence.context = { requested, actual:gl instanceof WebGL2RenderingContext ? 2 : 1,
             version:gl.getParameter(gl.VERSION), renderer:gl.getParameter(gl.RENDERER),

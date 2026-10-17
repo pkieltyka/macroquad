@@ -12,7 +12,7 @@ export function regenerateBundle(base, glSource = fs.readFileSync(new URL("../ve
     assert.equal(bundle.split(before).length - 1, 1, `${name}: upstream anchor must occur exactly once`);
     bundle = bundle.replace(before, after);
   };
-  const start = glSource.indexOf("function init_webgl(version) {");
+  const start = glSource.indexOf("function init_webgl(version, antialias) {");
   const end = glSource.indexOf("\ncanvas.focus();", start);
   assert.ok(start >= 0 && end > start, "vendored WebGL initializer is missing");
   const oldStart = base.indexOf("function init_webgl(e){");
@@ -28,7 +28,7 @@ export function regenerateBundle(base, glSource = fs.readFileSync(new URL("../ve
     'var releaseOwnedMouseButtons=setup_owned_mouse_input();canvas.addEventListener("wheel",function(e){e.preventDefault();wasm_exports.mouse_wheel(-e.deltaX,-e.deltaY)});');
   replace("owned mouse blur termination", 'n!=e&&(wasm_exports.focus(e),n=e)',
     'n!=e&&(!e&&releaseOwnedMouseButtons(),wasm_exports.focus(e),n=e)');
-  replace("WebGL selection extension", "init_webgl}};", "init_webgl,webgl_selection_version:function(){return 1;}}};");
+  replace("WebGL selection extension", "init_webgl}};", "init_webgl,webgl_selection_version:function(){return 2;}}};");
   replace("fallback canvas", 'document.querySelector("#glcanvas");',
     'document.querySelector("#glcanvas")||(()=>{const e=document.createElement("canvas");return e.id="glcanvas",e.tabIndex=1,(document.body||document.documentElement).appendChild(e),e})();');
   replace("bounded download copy",
@@ -64,7 +64,7 @@ export function runtimeSources(repoRoot, assetRoot = repoRoot) {
   assert.equal(sha256(base), metadata.base.bundleSha256, "upstream browser runtime checksum changed");
   const bundle = fs.readFileSync(path.join(assetRoot, "js/mq_js_bundle.js"), "utf8");
   const selection = metadata.extensions.fork_webgl_selection;
-  assert.equal(selection.version, 1, "unsupported WebGL selection extension");
+  assert.equal(selection.version, 2, "unsupported WebGL selection extension");
   const glSource = fs.readFileSync(path.join(repoRoot, selection.sourcePath), "utf8");
   assert.equal(sha256(glSource), selection.sourceSha256, "vendored WebGL runtime source checksum changed");
   assert.equal(bundle, regenerateBundle(base, glSource), "browser runtime is not reproducible; run node tools/regenerate_browser_runtime.mjs");

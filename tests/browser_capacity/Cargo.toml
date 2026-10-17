@@ -12,6 +12,7 @@ webgl2 = []
 auto = []
 ui-small = []
 ui-tiny = []
+antialias4 = []
 
 [[bin]]
 name = "browser-capacity-regression"

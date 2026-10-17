@@ -95,7 +95,7 @@ pub enum AppleGfxApi {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WebGLVersion {
     /// Prefer WebGL 2.0; fall back to WebGL 1.0 only if context creation fails.
-    /// Requires the fork's paired JavaScript selection extension v1.
+    /// Requires the fork's paired JavaScript selection/antialias extension v2.
     #[default]
     Auto,
     /// Require WebGL 1.0 without trying WebGL 2.0.
@@ -228,6 +228,9 @@ pub struct Conf {
 
     /// MSAA sample count.
     /// Defaults to `1`.
+    /// On WebGL, values <= 1 request antialiasing off and values > 1 request it
+    /// on. The browser chooses the actual technique/sample count and may not
+    /// provide antialiasing; an exact sample count cannot be requested.
     pub sample_count: i32,
 
     /// If `true`, the user can resize the window.

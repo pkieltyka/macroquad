@@ -57,9 +57,17 @@ fn window_conf() -> Conf {
 
 Rust derives its GL version, formats and MSAA capabilities from the actual
 context. A fallback WebGL1 context does not advertise WebGL2/MSAA resolves.
-The paired runtime's `webgl_selection_version` extension v1 is checked before
+The paired runtime's `webgl_selection_version` extension v2 is checked before
 context creation while the legacy Miniquad ABI stays 2 and audio ABI stays 1.
-The earlier `c4cc…67e9` runtime is incompatible with this new Rust build; use the
+WebGL `Conf.sample_count <= 1` now requests drawing-buffer antialiasing off;
+values > 1 request it on. Browsers select the actual technique/sample count,
+so a request of4 does not guarantee4 samples or antialiasing availability.
+This corrects the previously ignored setting: the default1 now disables AA.
+Only the antialias attribute is specified; alpha and other browser defaults stay
+unchanged. `framebuffer_alpha` remains Android-only, pending a separate web
+composition contract. See the [WebGL attribute specification](https://registry.khronos.org/webgl/specs/latest/1.0/#5.2).
+The prior development runtime `55aaa3…05d` uses extension v1 and is incompatible
+with this new initializer, as is the earlier `c4cc…67e9` runtime. Use the
 included regenerated runtime and upgrade Rust/JavaScript together. Auto is a
 capability preference, not a performance measurement or context-restoration feature.
 Exhaustive matches over `WebGLVersion` must handle the new `Auto` variant.

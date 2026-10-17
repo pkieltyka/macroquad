@@ -1,11 +1,15 @@
 # Browser runtime provenance
 
 The current development source pairs Rust with `js/mq_js_bundle.js`, SHA-256
-`55aaa3fc74b1b46294077c387e9d612e94a81b8cb9b9b0059f34c33ad78fe05d`
-(41,648 bytes). It adds owned browser mouse termination to the planned0.5.1
-capacity/input work. Package/release-template version fields remain0.5.0 until
+`b2d7cca117a9187a37368b66dc0f2eb426e3d1d3bd66d7f51aaf12c9362d0c65`
+(41,826 bytes). It includes owned browser mouse termination and the checked
+v2 antialias initializer for the planned0.5.1 work. Package/release-template version fields remain0.5.0 until
 the final release-preparation decision; this runtime is not the immutable0.5.0
 release asset and no new tag/publication is implied.
+
+The prior development runtime used extension v1, SHA256
+`55aaa3fc74b1b46294077c387e9d612e94a81b8cb9b9b0059f34c33ad78fe05d`
+(41,648 bytes). It is rejected before context creation by current Rust.
 
 The prior0.5.0 runtime SHA256 was
 `501cbd90f2494eda6d05407e8328f7a47fa08c5c8c802a9c056d036bbd2c4dac`
@@ -44,8 +48,15 @@ Auto requests WebGL2 first and falls back to WebGL1 only when creation returns
 null or throws. Explicit1/2 do not fall back. Unsupported modes and unavailable
 required contexts fail before extension/GPU calls. Only the actual WebGL1 path
 initializes legacy extensions; Rust capabilities follow the actual context.
-`env.webgl_selection_version` returns extension version1, required by current
-Rust before startup. Miniquad ABI2 and existing plugin/audio ABI1 remain intact;
+`env.webgl_selection_version` returns extension version2, required by current
+Rust before startup. The initializer takes `(version, antialias)`, with antialias
+encoded as0/1: `sample_count <= 1` requests false, larger values request true
+for every explicit/Auto/fallback attempt. WebGL only exposes an antialias
+Boolean request; the actual technique/sample count is browser-selected and may
+be unavailable. Alpha and other context defaults remain unchanged. Current
+Rust rejects extension v1 with an explicit diagnostic before context/GPU work;
+the offline pairing checker also rejects a version mismatch.
+Miniquad ABI2 and existing plugin/audio ABI1 remain intact;
 the strict import gate rejects the old bundle before fallback stubs can hide
 the missing extension. This does not claim faster frames or context restoration.
 

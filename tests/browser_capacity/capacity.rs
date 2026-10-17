@@ -12,6 +12,7 @@ fn conf() -> Conf {
         window_title: "Draw capacity regression".into(),
         window_width: 64,
         window_height: 64,
+        sample_count: if cfg!(feature = "antialias4") { 4 } else { 1 },
         platform: macroquad::miniquad::conf::Platform {
             webgl_version: if cfg!(feature = "auto") {
                 WebGLVersion::Auto

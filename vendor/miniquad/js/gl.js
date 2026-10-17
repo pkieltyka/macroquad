@@ -24,13 +24,16 @@ var high_dpi = false;
 // if false, requestAnimationFrame will be called at the end of each frame
 var blocking_event_loop = false;
 
-function init_webgl(version) {
+function init_webgl(version, antialias) {
     if (version !== 0 && version !== 1 && version !== 2) {
         throw new RangeError("Unsupported WebGL request: " + version);
     }
+    if (antialias !== 0 && antialias !== 1) {
+        throw new RangeError("Unsupported WebGL antialias request: " + antialias);
+    }
     function createContext(name) {
         try {
-            return canvas.getContext(name);
+            return canvas.getContext(name, { antialias: antialias === 1 });
         } catch (error) {
             return null;
         }
@@ -1480,7 +1483,7 @@ var importObject = {
             animation_frame_timeout = window.requestAnimationFrame(animation);
         },
         init_webgl,
-        webgl_selection_version: function () { return 1; }
+        webgl_selection_version: function () { return 2; }
     }
 };
 

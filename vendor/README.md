@@ -42,7 +42,11 @@ including additive Auto configuration and the paired JavaScript initializer.
 Local browser selection in `src/conf.rs`, `src/native/wasm.rs` and `js/gl.js`
 adds default Auto/mode0, preferring WebGL2 with fallback only on context-creation
 failure. Explicit1/2 stay strict. A required `webgl_selection_version` extension
-v1 prevents old JavaScript silently interpreting Auto as a strict WebGL2 request.
+v2 prevents old JavaScript silently interpreting Auto or ignoring the new
+antialias argument. `sample_count <= 1` requests antialias false; larger values
+request true with browser-selected technique/sample count. Only antialias is
+specified, preserving alpha/other browser defaults. Old v1 runtimes fail clearly
+before context creation.
 Actual context version/capability detection remains authoritative. The maintained
 aggregate copies this initializer from the vendored JS.
 

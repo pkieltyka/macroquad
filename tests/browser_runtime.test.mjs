@@ -312,7 +312,7 @@ test("the previous paired runtime is rejected before its loader can stub the sel
   const oldRuntime = createRuntime({ bundle: oldBundle });
   assert.throws(() => validateWasmContract(wasm(), oldRuntime, sources.metadata.abi), /missing WASM import implementation: env.webgl_selection_version/);
   const runtime = createRuntime(sources);
-  runtime.importObject.env.webgl_selection_version = () => 2;
+  runtime.importObject.env.webgl_selection_version = () => 1;
   assert.throws(() => validateWasmContract(wasm(), runtime, sources.metadata.abi), /selection extension version mismatch/);
 });
 

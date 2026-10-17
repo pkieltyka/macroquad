@@ -6,10 +6,22 @@ are called out separately. Use `git log --follow -- <path>` to find the local
 integration commit. Recheck the ledger when updating upstream and drop patches
 that have landed there.
 
+## Configured WebGL antialias request for planned 0.5.1
+
+The previous browser initializer ignored `Conf.sample_count`, implicitly requesting
+browser-default antialiasing even for the default1. The paired v2 contract passes
+an explicit0/1 antialias argument: values <=1 request false, >1 request true on
+explicit1/2, Auto2 and fallback1 alike. Browsers choose actual sample count and
+may not provide requested AA; this is no exact-count or performance guarantee.
+Alpha and all other context defaults remain unchanged; the Android-only alpha
+field is not silently repurposed. Rust checks extension v2 before setup and logs
+a clear old-runtime diagnostic; runtime/checker/provenance/vendor patch move
+together. This local correction preserves previous input/audio/ownership fixes.
+
 ## Local automatic WebGL selection for 0.5.0
 
 The local `WebGLVersion::Auto` variant is now the default. The WASM boundary
-maps it to mode0 and checks the additive `webgl_selection_version` extension v1
+introduced mode0 and checked the additive `webgl_selection_version` extension v1
 before context setup. The patched vendor initializer tries WebGL2 then WebGL1
 only on context-creation failure; explicit1/2 stay strict, and unavailable or
 unsupported requests fail before extension/GPU calls. Rust capabilities continue

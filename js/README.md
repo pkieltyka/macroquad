@@ -2,15 +2,17 @@
 
 `mq_js_bundle.js` is the included, fork-owned runtime paired with this fork's
 current development source for HTML5/WASM/WebGL games. Release-template
-version fields remain**0.5.0** pending release preparation; current input changes
+version fields remain**0.5.0** pending release preparation; current input/antialias changes
 belong to planned0.5.1 and do not replace the immutable0.5.0 release asset. It requires no private Zubspace files.
 It is generated from the published upstream **0.4.16** aggregate plus the
 reviewed local fixes, including `audio_source_state` extension v1. Miniquad's
 Rust dependency remains the locally patched **0.4.11** source.
 The initializer and owned-mouse helper are taken from `vendor/miniquad/js/gl.js`, with an additive
-`webgl_selection_version` extension v1. Auto (mode 0) tries WebGL2 then WebGL1
+`webgl_selection_version` extension v2. Auto (mode 0) tries WebGL2 then WebGL1
 only on context-creation failure; explicit modes 1/2 are strict. Old runtime
-bundles without the extension are rejected before context creation.
+bundles without extension v2 are rejected before context creation.
+`sample_count <= 1` disables drawing-buffer antialiasing; larger values request
+it with browser-selected technique/sample count. Alpha/composition remains unchanged.
 
 With Node.js 22+ from this checkout (no network or minifier required):
 

@@ -4,15 +4,26 @@
 <canvas id="glcanvas" width="64" height="64" tabindex="1"></canvas>
 <script>
 window.evidence = {messages:[], errors:[], phases:[], completed:false};
-if (new URLSearchParams(location.search).get("block2") === "1") {
-    const getContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function(name, ...args) {
-        return name === "webgl2" ? null : getContext.call(this,name,...args);
-    };
-}
+const contextRequests = [];
+evidence.contextRequests = contextRequests;
+evidence.resources = {createdBuffers:0,liveBuffers:0};
+const getContext = HTMLCanvasElement.prototype.getContext;
+HTMLCanvasElement.prototype.getContext = function(name, ...args) {
+    if (name === "webgl" || name === "webgl2") {
+        contextRequests.push({name, attributes: args[0] === undefined ? null : {...args[0]}});
+        if (name === "webgl2" && new URLSearchParams(location.search).get("block2") === "1") return null;
+    }
+    return getContext.call(this,name,...args);
+};
 const stores = new Map(), uploads = new Map();
 for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
     const allocate = proto.bufferData, upload = proto.bufferSubData, remove = proto.deleteBuffer;
+    const create = proto.createBuffer, live = new Set();
+    proto.createBuffer = function() {
+        const buffer = create.call(this);
+        if (buffer) { live.add(buffer); evidence.resources.createdBuffers++; evidence.resources.liveBuffers++; }
+        return buffer;
+    };
     proto.bufferData = function(target, data, ...args) {
         const binding = this.getParameter(target === this.ARRAY_BUFFER ? this.ARRAY_BUFFER_BINDING : this.ELEMENT_ARRAY_BUFFER_BINDING);
         stores.set(binding, typeof data === "number" ? data : data.byteLength);
@@ -25,6 +36,10 @@ for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.pro
         return upload.call(this,target,offset,data,...args);
     };
     proto.deleteBuffer = function(buffer) {
+        if (buffer) {
+            if (!live.delete(buffer)) evidence.errors.push("Duplicate/unowned buffer deletion");
+            else evidence.resources.liveBuffers--;
+        }
         stores.delete(buffer); uploads.delete(buffer);
         return remove.call(this,buffer);
     };
@@ -32,7 +47,9 @@ for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.pro
 let active, restore;
 function begin(name) {
     if (active) throw new Error("Nested capacity phase");
-    evidence.context = {version:gl.getParameter(gl.VERSION), renderer:gl.getParameter(gl.RENDERER)};
+    evidence.context = {version:gl.getParameter(gl.VERSION), renderer:gl.getParameter(gl.RENDERER),
+        requests:contextRequests, attributes:gl.getContextAttributes(), samples:gl.getParameter(gl.SAMPLES),
+        sampleBuffers:gl.getParameter(gl.SAMPLE_BUFFERS)};
     active = {name, draws:[]};
     const originals = new Map();
     for (const method of ["drawElements", "drawElementsInstanced"]) {
@@ -89,5 +106,9 @@ window.onunhandledrejection = event => evidence.errors.push(String(event.reason)
 </script>
 <script src="/js/mq_js_bundle.js"></script>
 <script>
+if (new URLSearchParams(location.search).get("selectionVersion") === "1") {
+    // Labelled old-v1 contract: real Rust startup must reject before getContext.
+    importObject.env.webgl_selection_version = () => 1;
+}
 load(new URLSearchParams(location.search).get("wasm"));
 </script>

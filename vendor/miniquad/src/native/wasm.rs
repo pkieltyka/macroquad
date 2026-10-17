@@ -71,12 +71,21 @@ where
         crate::conf::WebGLVersion::WebGL2 => 2,
     };
     unsafe {
+        let extension_version = webgl_selection_version();
+        if extension_version != 2 {
+            // The generic panic hook logs debug payloads, so give a clear
+            // pairing diagnostic before rejecting the old initializer contract.
+            console_log(
+                b"This fork requires the paired WebGL selection/antialias extension v2\0"
+                    .as_ptr()
+                    .cast(),
+            );
+        }
         assert_eq!(
-            webgl_selection_version(),
-            1,
-            "This fork requires the paired WebGL selection extension v1"
+            extension_version, 2,
+            "This fork requires the paired WebGL selection/antialias extension v2"
         );
-        init_webgl(version);
+        init_webgl(version, i32::from(conf.sample_count > 1));
     }
 
     // setup initial canvas size
@@ -143,7 +152,7 @@ extern "C" {
     pub fn sapp_is_fullscreen() -> bool;
     pub fn sapp_set_window_size(new_width: u32, new_height: u32);
     pub fn sapp_schedule_update();
-    pub fn init_webgl(version: i32);
+    pub fn init_webgl(version: i32, antialias: i32);
     pub fn webgl_selection_version() -> u32;
     pub fn now() -> f64;
 }

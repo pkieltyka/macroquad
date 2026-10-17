@@ -21,6 +21,18 @@ import ui_material_browser as driver
 from browser import sha256, source_identity
 
 
+def old_v1_failure(result):
+    return (
+        not result["errors"]
+        and "This fork requires the paired WebGL selection/antialias extension v2"
+        in result["messages"]
+        and any("RuntimeError: unreachable" in message for message in result["messages"])
+        and result.get("completed") is False
+        and result.get("contextRequests") == []
+        and result.get("resources", {}).get("createdBuffers") == 0
+    )
+
+
 def validate(result, version, antialias=False):
     if (
         not result.get("context", {})
@@ -242,12 +254,10 @@ def main():
                     + urllib.parse.urlencode({"wasm": wasm, "selectionVersion": "1"})
                 )
                 diagnostic = "This fork requires the paired WebGL selection/antialias extension v2"
-                try:
-                    driver.check_browser(
-                        browser, url, marker=diagnostic, check_ui=False, force_dpr1=True
-                    )
-                except AssertionError:
-                    pass
+                driver.check_browser(
+                    browser, url, marker=diagnostic, check_ui=False, force_dpr1=True,
+                    expected_failure=old_v1_failure,
+                )
                 result = json.loads((driver.OUTPUT / f"{browser}.json").read_text())
                 assert (
                     diagnostic in result["messages"]

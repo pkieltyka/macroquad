@@ -2,7 +2,7 @@
 <canvas id="glcanvas" width="800" height="600" tabindex="1"></canvas>
 <script src="/tests/audio_unlock_gate.js"></script>
 <script>
-window.evidence = { messages: [], errors: [], allocated: [], deleted: [], audioInitialized: false, decodeContextCalls: 0 };
+window.evidence = { messages: [], errors: [], completed: false, allocated: [], deleted: [], audioInitialized: false, decodeContextCalls: 0 };
 const contexts = [];
 const NativeAudioContext = window.AudioContext || window.webkitAudioContext;
 function ObservedAudioContext(...args) {
@@ -17,6 +17,7 @@ function acceptCompleted() {
     if (!completedMessage || !audioUnlockGate?.complete()) return;
     window.validateCompleted();
     evidence.messages.push(completedMessage);
+    evidence.completed = true;
     completedMessage = null;
 }
 document.addEventListener("mousedown", event => audioUnlockGate?.gesture(event), true);

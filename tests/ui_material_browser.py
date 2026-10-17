@@ -23,6 +23,7 @@ import urllib.parse
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "target" / "ui-material-browser"
 OUTPUT.mkdir(parents=True, exist_ok=True)
+EVIDENCE_SCRIPT = "return window.evidence ? JSON.stringify({...window.evidence, visibility: document.visibilityState}) : null"
 
 
 def request(port, method, path, data=None):
@@ -54,7 +55,7 @@ def validate_audio_unlock(result, gesture_sent):
         raise AssertionError("Audio context did not resume to running after the trusted gesture")
 
 
-def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30, force_dpr1=False, exercise=None):
+def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30, force_dpr1=False, exercise=None, expected_failure=None):
     driver_env = os.environ.copy()
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -105,11 +106,15 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
             deadline = time.monotonic() + timeout
             unlocked = False
             while True:
-                result = request(port, "POST", f"/session/{session}/execute/sync", {
-                    "script": "return window.evidence && Object.assign({}, window.evidence, {visibility: document.visibilityState})", "args": [],
+                serialized = request(port, "POST", f"/session/{session}/execute/sync", {
+                    "script": EVIDENCE_SCRIPT, "args": [],
                 })
-                completed = result and any(marker in m for m in result["messages"])
-                if unlock_audio and completed:
+                # WebDriver can serialize returned object properties at different
+                # times. Serialize inside the page's single event-loop task.
+                result = json.loads(serialized) if serialized is not None else None
+                marked = result and any(marker in m for m in result["messages"])
+                completed = result and result.get("completed") is True
+                if unlock_audio and (marked or completed):
                     (OUTPUT / f"{browser}.json").write_text(json.dumps(result, indent=2) + "\n")
                     validate_audio_unlock(result, unlocked)
                 if unlock_audio and not completed and result and result.get("audioUnlock", {}).get("ready") and not unlocked:
@@ -119,20 +124,23 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
                                     {"type": "pointerDown", "button": 0}, {"type": "pointerUp", "button": 0}],
                     }]})
                     unlocked = True
-                if result and (result["errors"] or completed):
+                if result and (result["errors"] or completed or (expected_failure and expected_failure(result))):
                     break
                 if time.monotonic() >= deadline:
                     (OUTPUT / f"{browser}.json").write_text(json.dumps(result, indent=2) + "\n")
                     raise RuntimeError(f"{browser} regression timed out: {result}")
                 time.sleep(0.1)
             (OUTPUT / f"{browser}.json").write_text(json.dumps(result, indent=2) + "\n")
-            if result["errors"] or not any(marker in m for m in result["messages"]):
+            if result["errors"] or (not expected_failure and not (completed and marked)):
+                raise AssertionError(result)
+            if expected_failure and not expected_failure(result):
                 raise AssertionError(result)
             if check_ui and (result["phases"][0]["uiShaders"] != 0 or result["uiShaders"] != 1):
                 raise AssertionError(result)
             if unlock_audio:
                 validate_audio_unlock(result, unlocked)
-            print(f"{browser}: passed; {marker}", flush=True)
+            outcome = "expected startup failure observed" if expected_failure else "passed"
+            print(f"{browser}: {outcome}; {marker}", flush=True)
         finally:
             if session:
                 with contextlib.suppress(Exception):

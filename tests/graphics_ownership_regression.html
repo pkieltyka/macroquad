@@ -1,7 +1,7 @@
 <!doctype html>
 <canvas id="glcanvas" width="800" height="600" tabindex="1"></canvas>
 <script>
-window.evidence = { messages: [], errors: [], baselineTextures: null, finalTextures: null, shutdownTextures: null, rafRequested: 0, rafDelivered: 0 };
+window.evidence = { messages: [], errors: [], completed: false, baselineTextures: null, finalTextures: null, shutdownTextures: null, rafRequested: 0, rafDelivered: 0 };
 const liveTextures = new Set();
 const requestFrame = window.requestAnimationFrame.bind(window);
 window.requestAnimationFrame = callback => {
@@ -42,6 +42,7 @@ for (const type of ["log", "info", "warn", "error"]) {
                 evidence.shutdownTextures = liveTextures.size;
                 if (evidence.shutdownTextures !== 0) evidence.errors.push(`Textures remain after engine shutdown: ${evidence.shutdownTextures}`);
                 evidence.messages.push(message);
+                evidence.completed = true;
             }, 100);
             original.apply(console, args);
             return;

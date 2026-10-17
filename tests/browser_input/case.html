@@ -2,10 +2,11 @@
 <style>html,body {margin:0} #glcanvas {position:absolute;left:40px;top:40px;width:160px;height:120px} #other {position:absolute;left:300px;top:200px}</style>
 <canvas id="glcanvas" width="160" height="120" tabindex="1"></canvas><button id="other">Other control</button>
 <script>
-window.evidence={messages:[],errors:[],events:[],touches:[],focus:[],frames:[],trusted:[],ready:false};
+window.evidence={messages:[],errors:[],completed:false,events:[],touches:[],focus:[],frames:[],trusted:[],ready:false};
 for(const level of ["log","info","warn","error"]) {
  const original=console[level]; console[level]=(...args)=>{
   const value=args.join(" "); evidence.messages.push(value); original.apply(console,args);
+  if(value==="browser input regression: passed") evidence.completed=true;
   const parts=value.split(" ");
   if(parts[0]==="INPUT_READY") evidence.ready=true;
   if(parts[0]==="INPUT_EVENT") evidence.events.push({type:parts[1],button:Number(parts[2]),x:Number(parts[3]),y:Number(parts[4])});

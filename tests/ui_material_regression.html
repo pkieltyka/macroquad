@@ -1,7 +1,7 @@
 <!doctype html>
 <canvas id="glcanvas" width="800" height="600" tabindex="1"></canvas>
 <script>
-window.evidence = { messages: [], errors: [], uiShaders: 0, compiles: 0, phases: [] };
+window.evidence = { messages: [], errors: [], completed: false, uiShaders: 0, compiles: 0, phases: [] };
 for (const type of ["log", "info", "warn", "error"]) {
     const original = console[type];
     console[type] = (...args) => {
@@ -10,6 +10,7 @@ for (const type of ["log", "info", "warn", "error"]) {
         if (message.includes("regression:")) {
             evidence.phases.push({ message, uiShaders: evidence.uiShaders, compiles: evidence.compiles });
         }
+        if (message === "UI material regression passed") evidence.completed = true;
         original.apply(console, args);
     };
 }

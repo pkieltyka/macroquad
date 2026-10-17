@@ -1285,69 +1285,139 @@ pub(crate) mod ui_context {
             ctx: &mut dyn miniquad::RenderingBackend,
             quad_gl: &mut QuadGl,
         ) {
-            // TODO: this belongs to new and waits for cleaning up context initialization mess
-            let material = self.material.get_or_insert_with(|| {
-                load_material(
-                    match ctx.info().backend {
-                        Backend::OpenGl => ShaderSource::Glsl {
-                            vertex: VERTEX_SHADER,
-                            fragment: FRAGMENT_SHADER,
-                        },
-                        Backend::Metal => ShaderSource::Msl {
-                            program: METAL_SHADER,
-                        },
-                    },
-                    MaterialParams {
-                        pipeline_params: PipelineParams {
-                            color_blend: Some(BlendState::new(
-                                Equation::Add,
-                                BlendFactor::Value(BlendValue::SourceAlpha),
-                                BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
-                            )),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-            });
-
             let mut ui = self.ui.borrow_mut();
             self.ui_draw_list.clear();
             ui.render(&mut self.ui_draw_list);
-            let mut ui_draw_list = vec![];
 
-            std::mem::swap(&mut ui_draw_list, &mut self.ui_draw_list);
+            // The material waits for something to draw, so a game that never
+            // draws the UI never compiles its shader.
+            if !self.ui_draw_list.is_empty() {
+                // TODO: this belongs to new and waits for cleaning up context initialization mess
+                let material = self.material.get_or_insert_with(|| {
+                    load_material(
+                        match ctx.info().backend {
+                            Backend::OpenGl => ShaderSource::Glsl {
+                                vertex: VERTEX_SHADER,
+                                fragment: FRAGMENT_SHADER,
+                            },
+                            Backend::Metal => ShaderSource::Msl {
+                                program: METAL_SHADER,
+                            },
+                        },
+                        MaterialParams {
+                            pipeline_params: PipelineParams {
+                                color_blend: Some(BlendState::new(
+                                    Equation::Add,
+                                    BlendFactor::Value(BlendValue::SourceAlpha),
+                                    BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                                )),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+                });
 
-            let mut atlas = ui.atlas.lock().unwrap();
-            let font_texture = atlas.texture();
-            quad_gl.texture(Some(&Texture2D::unmanaged(font_texture)));
+                let mut ui_draw_list = vec![];
 
-            gl_use_material(material);
+                std::mem::swap(&mut ui_draw_list, &mut self.ui_draw_list);
 
-            for draw_command in &ui_draw_list {
-                if let Some(ref texture) = draw_command.texture {
-                    quad_gl.texture(Some(texture));
-                } else {
-                    quad_gl.texture(Some(&Texture2D::unmanaged(font_texture)));
+                let mut atlas = ui.atlas.lock().unwrap();
+                let font_texture = atlas.texture();
+                quad_gl.texture(Some(&Texture2D::unmanaged(font_texture)));
+
+                gl_use_material(material);
+
+                for draw_command in &ui_draw_list {
+                    if let Some(ref texture) = draw_command.texture {
+                        quad_gl.texture(Some(texture));
+                    } else {
+                        quad_gl.texture(Some(&Texture2D::unmanaged(font_texture)));
+                    }
+
+                    quad_gl.scissor(
+                        draw_command.clipping_zone.map(|rect| {
+                            (rect.x as i32, rect.y as i32, rect.w as i32, rect.h as i32)
+                        }),
+                    );
+                    quad_gl.draw_mode(DrawMode::Triangles);
+                    quad_gl.geometry(&draw_command.vertices[..], &draw_command.indices);
                 }
 
-                quad_gl.scissor(
-                    draw_command
-                        .clipping_zone
-                        .map(|rect| (rect.x as i32, rect.y as i32, rect.w as i32, rect.h as i32)),
-                );
-                quad_gl.draw_mode(DrawMode::Triangles);
-                quad_gl.geometry(&draw_command.vertices[..], &draw_command.indices);
+                std::mem::swap(&mut ui_draw_list, &mut self.ui_draw_list);
             }
             quad_gl.texture(None);
 
             gl_use_default_material();
 
-            std::mem::swap(&mut ui_draw_list, &mut self.ui_draw_list);
-
-            drop(atlas);
             ui.new_frame(get_frame_time());
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        #[ignore = "requires a graphics display; run with --ignored under Xvfb"]
+        fn ui_material_is_lazy_and_reused_after_empty_frames() {
+            crate::Window::new("UI material regression", async {
+                assert!(crate::get_context().ui_context.material.is_none());
+                next_frame().await;
+                assert!(crate::get_context().ui_context.material.is_none());
+                next_frame().await;
+                assert!(crate::get_context().ui_context.material.is_none());
+
+                clear_background(BLACK);
+                let texture = Texture2D::from_rgba8(1, 1, &[0, 0, 255, 255]);
+                crate::ui::root_ui().label(None, "first UI frame");
+                crate::ui::root_ui()
+                    .canvas()
+                    .image(Rect::new(200., 10., 32., 32.), &texture);
+                crate::ui::root_ui()
+                    .canvas()
+                    .rect(Rect::new(10., 80., 32., 32.), None, WHITE);
+                // Read before the platform swaps buffers; the next back buffer's
+                // contents are unspecified after next_frame().
+                let context = crate::get_context();
+                context
+                    .ui_context
+                    .draw(crate::get_quad_context(), &mut context.gl);
+                let rendered = get_screen_data();
+                assert!(
+                    rendered
+                        .bytes
+                        .chunks_exact(4)
+                        .filter(|pixel| *pixel == [0, 0, 255, 255])
+                        .count()
+                        >= 900
+                );
+                assert!(
+                    rendered
+                        .bytes
+                        .chunks_exact(4)
+                        .filter(|pixel| *pixel == [255, 255, 255, 255])
+                        .count()
+                        >= 900
+                );
+                let first = crate::get_context().ui_context.material.clone().unwrap();
+                assert!(!crate::get_context().ui_context.ui_draw_list.is_empty());
+                next_frame().await;
+                assert!(crate::get_context().ui_context.ui_draw_list.is_empty());
+                assert_eq!(
+                    crate::get_context().ui_context.material.as_ref(),
+                    Some(&first)
+                );
+
+                crate::ui::root_ui().label(None, "UI after an empty frame");
+                next_frame().await;
+                assert!(!crate::get_context().ui_context.ui_draw_list.is_empty());
+                assert_eq!(
+                    crate::get_context().ui_context.material.as_ref(),
+                    Some(&first)
+                );
+            });
         }
     }
 

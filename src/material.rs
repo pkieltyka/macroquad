@@ -1,6 +1,7 @@
 //! Custom materials - shaders, uniforms.
 
-use crate::{get_context, quad_gl::GlPipeline, texture::Texture2D, tobytes::ToBytes, Error};
+pub use crate::tobytes::ToBytes;
+use crate::{get_context, quad_gl::GlPipeline, texture::Texture2D, Error};
 use miniquad::{PipelineParams, UniformDesc};
 use std::sync::Arc;
 
@@ -29,7 +30,29 @@ impl Material {
     /// Set GPU uniform value for this material.
     /// "name" should be from "uniforms" list used for material creation.
     /// Otherwise uniform value would be silently ignored.
-    pub fn set_uniform<T>(&self, name: &str, uniform: T) {
+    /// Values must have an initialized, padding-free representation. Use arrays
+    /// or glam vectors instead of tuples, and convert application structs to
+    /// those types before uploading them.
+    ///
+    /// ```compile_fail
+    /// # use macroquad::material::Material;
+    /// #[repr(C)]
+    /// struct Padded { small: u8, large: u32 }
+    /// fn upload(material: &Material) {
+    ///     material.set_uniform("value", Padded { small: 1, large: 2 });
+    /// }
+    /// ```
+    ///
+    /// Implementing the representation contract requires an explicit unsafe impl:
+    ///
+    /// ```compile_fail
+    /// use macroquad::material::ToBytes;
+    /// struct Value(f32);
+    /// impl ToBytes for Value {
+    ///     fn to_bytes(&self) -> &[u8] { &[] }
+    /// }
+    /// ```
+    pub fn set_uniform<T: ToBytes>(&self, name: &str, uniform: T) {
         get_context().gl.set_uniform(self.pipeline.0, name, uniform);
     }
 

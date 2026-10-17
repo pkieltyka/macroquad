@@ -1,0 +1,43 @@
+<!doctype html>
+<canvas id="glcanvas" width="800" height="600" tabindex="1"></canvas>
+<script>
+// Compatibility for the bundled quad_net registrar; fixed by the runtime batch.
+var register_plugin;
+window.evidence = { messages: [], errors: [], uiShaders: 0, compiles: 0, phases: [] };
+for (const type of ["log", "info", "warn", "error"]) {
+    const original = console[type];
+    console[type] = (...args) => {
+        const message = args.join(" ");
+        evidence.messages.push(message);
+        if (message.includes("regression:")) {
+            evidence.phases.push({ message, uiShaders: evidence.uiShaders, compiles: evidence.compiles });
+        }
+        original.apply(console, args);
+    };
+}
+window.onerror = message => evidence.errors.push(String(message));
+window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
+for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+    const originalSource = prototype.shaderSource;
+    prototype.shaderSource = function (shader, source) {
+        // This declaration distinguishes the UI vertex shader from the default shader.
+        if (source.includes("varying lowp vec2 pos;")) evidence.uiShaders++;
+        return originalSource.call(this, shader, source);
+    };
+    const originalCompile = prototype.compileShader;
+    prototype.compileShader = function (shader) {
+        evidence.compiles++;
+        return originalCompile.call(this, shader);
+    };
+}
+</script>
+<script src="/js/mq_js_bundle.js"></script>
+<script>
+// get_screen_data needs a genuine framebuffer-status implementation.
+miniquad_add_plugin({
+    register_plugin: imports => {
+        imports.env.glCheckFramebufferStatus = target => gl.checkFramebufferStatus(target);
+    }
+});
+load("/target/wasm32-unknown-unknown/debug/examples/ui_material_regression.wasm");
+</script>

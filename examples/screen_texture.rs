@@ -31,7 +31,7 @@ async fn main() {
 
         let lens_center = mouse_position();
 
-        lens_material.set_uniform("Center", lens_center);
+        lens_material.set_uniform("Center", [lens_center.0, lens_center.1]);
 
         gl_use_material(&lens_material);
         draw_circle(lens_center.0, lens_center.1, 250.0, RED);

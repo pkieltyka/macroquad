@@ -283,89 +283,113 @@ struct Uniform {
     byte_size: usize,
 }
 
+// Miniquad forwards the pointer as f32/i32 pointers to OpenGL. A Vec<u8>
+// allocation only promises byte alignment, including under custom allocators.
+#[derive(Clone)]
+struct UniformBuffer(Vec<u32>);
+
+impl UniformBuffer {
+    fn new(byte_len: usize) -> Self {
+        assert_eq!(byte_len % 4, 0);
+        Self(vec![0; byte_len / 4])
+    }
+}
+
+impl std::ops::Deref for UniformBuffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        // SAFETY: every u32 bit pattern is initialized and has no padding.
+        // The byte view borrows the storage and preserves its four-byte alignment.
+        unsafe { std::slice::from_raw_parts(self.0.as_ptr().cast(), self.0.len() * 4) }
+    }
+}
+
+impl std::ops::DerefMut for UniformBuffer {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: all byte writes produce valid u32 values; the exclusive borrow
+        // prevents access through the word view while the byte view is live.
+        unsafe { std::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast(), self.0.len() * 4) }
+    }
+}
+
 #[derive(Clone)]
 struct PipelineExt {
     pipeline: miniquad::Pipeline,
     wants_screen_texture: bool,
     uniforms: Vec<Uniform>,
-    uniforms_data: Vec<u8>,
+    uniforms_data: UniformBuffer,
     textures: Vec<String>,
     textures_data: BTreeMap<String, MiniquadTexture>,
 }
 
-impl PipelineExt {
-    fn set_uniform<T>(&mut self, name: &str, uniform: T) {
-        let uniform_meta = self.uniforms.iter().find(
-            |Uniform {
-                 name: uniform_name, ..
-             }| uniform_name == name,
-        );
-        if uniform_meta.is_none() {
-            warn!("Trying to set non-existing uniform: {}", name);
+impl Uniform {
+    fn set_scalar<T: ToBytes>(&self, destination: &mut [u8], uniform: T) {
+        if size_of::<T>() != self.uniform_type.size() || self.byte_size != self.uniform_type.size()
+        {
+            warn!("Uniform {} requires a matching scalar value", self.name);
             return;
         }
-        let uniform_meta = uniform_meta.unwrap();
-        let uniform_format = uniform_meta.uniform_type;
-        let uniform_byte_size = uniform_format.size();
-        let uniform_byte_offset = uniform_meta.byte_offset;
+        self.set_bytes(destination, uniform.to_bytes());
+    }
 
-        if size_of::<T>() != uniform_byte_size {
+    fn set_bytes(&self, destination: &mut [u8], bytes: &[u8]) {
+        if bytes.len() != self.byte_size {
             warn!(
-                "Trying to set uniform {} sized {} bytes value of {} bytes",
-                name,
-                uniform_byte_size,
-                size_of::<T>()
+                "Trying to set uniform {} sized {} bytes with {} bytes",
+                self.name,
+                self.byte_size,
+                bytes.len()
             );
             return;
         }
-        if uniform_byte_size != uniform_meta.byte_size {
-            warn!("set_uniform do not support uniform arrays");
-            return;
-        }
-        macro_rules! transmute_uniform {
-            ($uniform_size:expr, $byte_offset:expr, $n:expr) => {
-                if $uniform_size == $n {
-                    let data: [u8; $n] = unsafe { std::mem::transmute_copy(&uniform) };
+        destination[self.byte_offset..self.byte_offset + self.byte_size].copy_from_slice(bytes);
+    }
+}
 
-                    for i in 0..$uniform_size {
-                        self.uniforms_data[$byte_offset + i] = data[i];
-                    }
-                }
-            };
+fn uniform_layout(descriptions: &[UniformDesc]) -> Result<(Vec<Uniform>, usize), Error> {
+    let mut offset = 0_usize;
+    let mut uniforms = Vec::with_capacity(descriptions.len());
+    for description in descriptions {
+        // Miniquad casts the count to a GLsizei (i32) and computes the same
+        // offsets unchecked. Validate before handing metadata to the backend.
+        if description.array_count == 0 || description.array_count > i32::MAX as usize {
+            return Err("Uniform array count must fit a positive i32".into());
         }
-        transmute_uniform!(uniform_byte_size, uniform_byte_offset, 4);
-        transmute_uniform!(uniform_byte_size, uniform_byte_offset, 8);
-        transmute_uniform!(uniform_byte_size, uniform_byte_offset, 12);
-        transmute_uniform!(uniform_byte_size, uniform_byte_offset, 16);
-        transmute_uniform!(uniform_byte_size, uniform_byte_offset, 64);
+        let byte_size = description
+            .uniform_type
+            .size()
+            .checked_mul(description.array_count)
+            .ok_or("Uniform array byte size overflow")?;
+        let end = offset
+            .checked_add(byte_size)
+            .filter(|end| *end <= isize::MAX as usize && *end <= i32::MAX as usize)
+            .ok_or("Uniform buffer byte size overflow")?;
+        uniforms.push(Uniform {
+            name: description.name.clone(),
+            uniform_type: description.uniform_type,
+            byte_offset: offset,
+            byte_size,
+        });
+        offset = end;
+    }
+    Ok((uniforms, offset))
+}
+
+impl PipelineExt {
+    fn set_uniform<T: ToBytes>(&mut self, name: &str, uniform: T) {
+        if let Some(meta) = self.uniforms.iter().find(|meta| meta.name == name) {
+            meta.set_scalar(&mut self.uniforms_data, uniform);
+        } else {
+            warn!("Trying to set non-existing uniform: {}", name);
+        }
     }
 
     fn set_uniform_array<T: ToBytes>(&mut self, name: &str, uniform: &[T]) {
-        let uniform_meta = self.uniforms.iter().find(
-            |Uniform {
-                 name: uniform_name, ..
-             }| uniform_name == name,
-        );
-        if uniform_meta.is_none() {
+        if let Some(meta) = self.uniforms.iter().find(|meta| meta.name == name) {
+            meta.set_bytes(&mut self.uniforms_data, uniform.to_bytes());
+        } else {
             warn!("Trying to set non-existing uniform: {}", name);
-            return;
-        }
-        let uniform_meta = uniform_meta.unwrap();
-        let uniform_byte_size = uniform_meta.byte_size;
-        let uniform_byte_offset = uniform_meta.byte_offset;
-
-        let data = uniform.to_bytes();
-        if data.len() != uniform_byte_size {
-            warn!(
-                "Trying to set uniform {} sized {} bytes value of {} bytes",
-                name,
-                uniform_byte_size,
-                size_of::<T>()
-            );
-            return;
-        }
-        for i in 0..uniform_byte_size {
-            self.uniforms_data[uniform_byte_offset + i] = data[i];
         }
     }
 }
@@ -498,34 +522,17 @@ impl PipelinesStorage {
             .position(|p| p.is_none())
             .unwrap_or_else(|| panic!("Pipelines amount exceeded"));
 
-        let mut max_offset = 0;
-
         for (name, kind) in shader::uniforms().into_iter().rev() {
             uniforms.insert(0, UniformDesc::new(name, kind));
         }
-
-        let uniforms = uniforms
-            .iter()
-            .scan(0, |offset, uniform| {
-                let byte_size = uniform.uniform_type.size() * uniform.array_count;
-                let uniform = Uniform {
-                    name: uniform.name.clone(),
-                    uniform_type: uniform.uniform_type,
-                    byte_size,
-                    byte_offset: *offset,
-                };
-                *offset += byte_size;
-                max_offset = *offset;
-
-                Some(uniform)
-            })
-            .collect();
+        let (uniforms, max_offset) = uniform_layout(&uniforms)
+            .expect("uniform metadata must be validated before creating the pipeline");
 
         self.pipelines[id] = Some(PipelineExt {
             pipeline,
             wants_screen_texture,
             uniforms,
-            uniforms_data: vec![0; max_offset],
+            uniforms_data: UniformBuffer::new(max_offset),
             textures,
             textures_data: BTreeMap::new(),
         });
@@ -638,6 +645,7 @@ impl QuadGl {
             ShaderSource::Msl { program } => program,
         };
         let wants_screen_texture = source.contains("_ScreenTexture");
+        uniform_layout(&shader_meta.uniforms.uniforms)?;
         let shader = ctx.new_shader(shader, shader_meta)?;
         Ok(self.pipelines.make_pipeline(
             ctx,
@@ -913,7 +921,7 @@ impl QuadGl {
                     self.pipelines
                         .get_quad_pipeline_mut(pipeline)
                         .uniforms_data
-                        .clone(),
+                        .to_vec(),
                 )
             });
 
@@ -959,7 +967,7 @@ impl QuadGl {
         self.pipelines.delete_pipeline(pipeline);
     }
 
-    pub fn set_uniform<T>(&mut self, pipeline: GlPipeline, name: &str, uniform: T) {
+    pub fn set_uniform<T: ToBytes>(&mut self, pipeline: GlPipeline, name: &str, uniform: T) {
         self.state.break_batching = true;
 
         self.pipelines
@@ -1124,6 +1132,96 @@ mod shader {
                     .map(|(name, kind)| UniformDesc::new(name, kind))
                     .collect(),
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod uniform_tests {
+    use super::*;
+
+    #[test]
+    fn uploads_preserve_offsets_and_reject_mismatched_lengths() {
+        let (uniforms, size) = uniform_layout(&[
+            UniformDesc::new("prefix", UniformType::Int1),
+            UniformDesc::new("vector", UniformType::Float3),
+            UniformDesc::new("array", UniformType::Float2).array(2),
+            UniformDesc::new("matrix", UniformType::Mat4),
+        ])
+        .unwrap();
+        let mut bytes = UniformBuffer::new(size);
+        bytes.fill(0x55);
+        uniforms[0].set_scalar(&mut bytes, 42_i32);
+        uniforms[1].set_scalar(&mut bytes, [1_f32, 2., 3.]);
+        uniforms[2].set_bytes(&mut bytes, [[4_f32, 5.], [6., 7.]].to_bytes());
+        uniforms[3].set_scalar(&mut bytes, glam::Mat4::IDENTITY);
+        let expected: Vec<_> = 42_i32
+            .to_ne_bytes()
+            .into_iter()
+            .chain(
+                [1_f32, 2., 3., 4., 5., 6., 7.]
+                    .iter()
+                    .flat_map(|f| f.to_ne_bytes()),
+            )
+            .chain(
+                glam::Mat4::IDENTITY
+                    .to_cols_array()
+                    .iter()
+                    .flat_map(|f| f.to_ne_bytes()),
+            )
+            .collect();
+        assert_eq!(&*bytes, expected);
+        uniforms[1].set_scalar(&mut bytes, 1_f32);
+        uniforms[2].set_scalar(&mut bytes, [9_f32; 4]);
+        uniforms[2].set_bytes(&mut bytes, [9_f32; 2].to_bytes());
+        uniforms[2].set_bytes(&mut bytes, [9_f32; 6].to_bytes());
+        assert_eq!(&*bytes, expected);
+    }
+
+    #[test]
+    fn backend_uniform_pointer_supports_typed_reads() {
+        let mut buffer = UniformBuffer::new(16);
+        buffer.copy_from_slice([1_i32, -2, 3, -4].to_bytes());
+        assert_eq!(buffer.as_ptr().align_offset(std::mem::align_of::<i32>()), 0);
+        // SAFETY: this is the typed pointer Miniquad passes to GL. The buffer
+        // guarantees alignment, initialized words, and the exact byte extent.
+        let words = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<i32>(), 4) };
+        assert_eq!(words, [1, -2, 3, -4]);
+    }
+
+    #[test]
+    fn invalid_uniform_counts_are_rejected_before_backend_use() {
+        for count in [0, i32::MAX as usize + 1, usize::MAX] {
+            assert!(
+                uniform_layout(&[UniformDesc::new("bad", UniformType::Mat4).array(count)]).is_err()
+            );
+        }
+        {
+            let count = i32::MAX as usize / 64;
+            assert!(uniform_layout(&[
+                UniformDesc::new("a", UniformType::Mat4).array(count),
+                UniformDesc::new("b", UniformType::Mat4).array(count),
+            ])
+            .is_err());
+            assert!(uniform_layout(&[
+                UniformDesc::new("overflow", UniformType::Mat4).array(i32::MAX as usize),
+            ])
+            .is_err());
+        }
+        #[cfg(target_pointer_width = "32")]
+        {
+            // Each count is legal for GLsizei, but the byte length is not legal
+            // for Rust slices on wasm32.
+            let count = isize::MAX as usize / 64;
+            assert!(uniform_layout(&[
+                UniformDesc::new("a", UniformType::Mat4).array(count),
+                UniformDesc::new("b", UniformType::Mat4).array(count),
+            ])
+            .is_err());
+            assert!(uniform_layout(&[
+                UniformDesc::new("overflow", UniformType::Mat4).array(i32::MAX as usize),
+            ])
+            .is_err());
         }
     }
 }

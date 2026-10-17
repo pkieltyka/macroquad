@@ -173,7 +173,7 @@ async fn main() {
                                 .ui(ui, y);
 
                             if let (Ok(x), Ok(y)) = (x.parse::<f32>(), y.parse::<f32>()) {
-                                material.set_uniform(name, (x, y));
+                                material.set_uniform(name, [x, y]);
                             }
                         }
                         Uniform::Float3(x, y, z) => {
@@ -199,7 +199,7 @@ async fn main() {
                             if let (Ok(x), Ok(y), Ok(z)) =
                                 (x.parse::<f32>(), y.parse::<f32>(), z.parse::<f32>())
                             {
-                                material.set_uniform(name, (x, y, z));
+                                material.set_uniform(name, [x, y, z]);
                             }
                         }
 
@@ -218,7 +218,7 @@ async fn main() {
                                 colorpicker_window = true;
                                 color_picking_uniform = Some(name.to_owned());
                             }
-                            material.set_uniform(name, (color.x, color.y, color.z));
+                            material.set_uniform(name, [color.x, color.y, color.z]);
                         }
                     }
                 }

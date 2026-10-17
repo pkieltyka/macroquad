@@ -98,7 +98,11 @@ def validate_submissions(result):
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise AssertionError("Invalid submission call count")
         draws = calls.get("drawElements", 0) + calls.get("drawElementsInstanced", 0)
-        if draws <= 0 or calls.get("bufferSubData") != draws * 2 or calls.get("bindFramebuffer", 0) < draws:
+        # Each flush uploads one vertex/index pair per shared segment (never more
+        # than one pair per call) and draws inside at least one begun/ended pass.
+        uploads = calls.get("bufferSubData", 0)
+        if (draws <= 0 or uploads % 2 or not 2 <= uploads <= draws * 2
+                or calls.get("bindFramebuffer", 0) < 2):
             raise AssertionError("Missing actual submission calls")
         if any(calls.get(name, 0) for name in ("bufferData", "createBuffer", "deleteBuffer", "createTexture", "deleteTexture", "texImage2D", "texSubImage2D", "drawArrays", "drawArraysInstanced")):
             raise AssertionError("Unexpected warm scene resource churn")

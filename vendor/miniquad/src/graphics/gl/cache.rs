@@ -26,6 +26,8 @@ pub struct CachedTexture {
 }
 
 pub struct GlCache {
+    /// Texture unit last made active by `bind_texture`; `None` when unknown.
+    pub active_texture: Option<usize>,
     pub stored_index_buffer: GLuint,
     pub stored_index_type: Option<u32>,
     pub stored_vertex_buffer: GLuint,
@@ -88,7 +90,12 @@ impl GlCache {
 
     pub fn bind_texture(&mut self, slot_index: usize, target: GLuint, texture: GLuint) {
         unsafe {
-            glActiveTexture(GL_TEXTURE0 + slot_index as GLuint);
+            // Callers such as texture uploads rely on `slot_index` being the
+            // active unit afterwards; only the redundant switch is skipped.
+            if self.active_texture != Some(slot_index) {
+                glActiveTexture(GL_TEXTURE0 + slot_index as GLuint);
+                self.active_texture = Some(slot_index);
+            }
             if self.textures[slot_index].target != target
                 || self.textures[slot_index].texture != texture
             {
@@ -167,6 +174,7 @@ mod texture_deletion_tests {
     // without rebinding or disturbing any other texture's actual GL state.
     fn cache() -> GlCache {
         GlCache {
+            active_texture: None,
             stored_index_buffer: 7,
             stored_index_type: Some(GL_UNSIGNED_SHORT),
             stored_vertex_buffer: 8,

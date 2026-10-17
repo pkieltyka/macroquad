@@ -46,8 +46,9 @@ pub struct Mesh {
 
 /// Submit one indexed mesh atomically. Indices must address its vertex slice and
 /// both counts must fit the effective capacities. Invalid/oversized submissions
-/// panic in debug builds; release builds reject the whole call and warn once per
-/// renderer. Empty indices submit nothing. Custom materials are never split.
+/// panic with `debug_assertions`; otherwise the whole call is rejected with one
+/// warning per distinct reason. Empty indices submit nothing. Meshes are never
+/// split, whatever their material.
 pub fn draw_mesh(mesh: &Mesh) {
     crate::with_context(|context| {
         context.gl.texture(mesh.texture.as_ref());

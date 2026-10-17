@@ -77,9 +77,10 @@ class SubmissionProtocol(unittest.TestCase):
         return {"submissions": {"frames": [{"trial": trial, "variant": variant, "counts": {
             "vertexUploadBytes": 327840, "indexUploadBytes": 24588, "bufferDataBytes": 0,
             "submittedIndices": 12294, "submittedVertices": 0,
+            # Camera frames flush once per label; screen frames share uploads.
             "calls": {"drawElementsInstanced": 37 if variant == "camera" else 6,
-                      "bufferSubData": 74 if variant == "camera" else 12,
-                      "bindFramebuffer": 76 if variant == "camera" else 14},
+                      "bufferSubData": 74 if variant == "camera" else 4,
+                      "bindFramebuffer": 76 if variant == "camera" else 6},
         }} for trial, variant in order]}}
 
     def test_complete_matched_work_is_accepted(self):
@@ -101,8 +102,11 @@ class SubmissionProtocol(unittest.TestCase):
             lambda r: r["submissions"]["frames"][0]["counts"].pop("bufferDataBytes"),
             lambda r: r["submissions"]["frames"][0]["counts"].update(submittedVertices=False),
             lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(drawElementsInstanced=0),
-            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bufferSubData=2),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bufferSubData=3),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bufferSubData=0),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bufferSubData=76),
             lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bindFramebuffer=0),
+            lambda r: r["submissions"]["frames"][1]["counts"]["calls"].update(bindFramebuffer=1),
             lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(createTexture=1),
             lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bufferData=True),
         ]

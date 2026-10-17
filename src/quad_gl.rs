@@ -563,8 +563,14 @@ pub struct QuadGl {
     pipelines: PipelinesStorage,
 
     draw_calls: Vec<DrawCall>,
-    draw_calls_bindings: Vec<Bindings>,
     draw_calls_count: usize,
+    // Shared GPU buffers, one pair per u16-addressable flush segment. They are
+    // sized by actual use and reused across flushes instead of allocating a
+    // full-capacity pair for every draw call slot.
+    flush_buffers: Vec<FlushBuffers>,
+    flush_plan: FlushPlan,
+    // Uniform values are program state; built-in pipelines share one program.
+    uniform_cache: Vec<(ShaderId, Vec<u32>)>,
     state: GlState,
     start_time: f64,
 
@@ -572,7 +578,8 @@ pub struct QuadGl {
     max_vertices: usize,
     max_indices: usize,
     vertex_limit: usize,
-    geometry_rejection_warned: bool,
+    // Release builds warn once per distinct rejection reason.
+    geometry_rejections_warned: Vec<&'static str>,
 
     batch_vertex_buffer: Vec<Vertex>,
     batch_index_buffer: Vec<u16>,
@@ -585,6 +592,82 @@ fn drawcall_vertex_limit(gl_version: &str) -> usize {
         u16::MAX as usize
     } else {
         u16::MAX as usize + 1
+    }
+}
+
+struct FlushBuffers {
+    bindings: Bindings,
+    vertex_capacity: usize,
+    index_capacity: usize,
+}
+
+/// A contiguous run of draw calls sharing one vertex/index buffer pair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FlushSegment {
+    first_vertex: usize,
+    vertices: usize,
+    first_index: usize,
+    indices: usize,
+}
+
+#[derive(Default)]
+struct FlushPlan {
+    segments: Vec<FlushSegment>,
+    /// Per draw call: its segment and first element in that segment's indices.
+    placements: Vec<(usize, usize)>,
+    /// Segment-relative indices of every draw call, in submission order.
+    indices: Vec<u16>,
+}
+
+impl FlushPlan {
+    /// Groups consecutive draw calls so every segment-relative index stays below
+    /// the backend vertex limit, and rebases each call's local indices.
+    fn build(
+        &mut self,
+        draw_calls: &[DrawCall],
+        batch_indices: &[u16],
+        vertex_limit: usize,
+        index_limit: usize,
+        segment_per_call: bool,
+    ) {
+        self.segments.clear();
+        self.placements.clear();
+        self.indices.clear();
+        for dc in draw_calls {
+            let fits = !segment_per_call
+                && self.segments.last().is_some_and(|segment| {
+                    segment.vertices + dc.vertices_count <= vertex_limit
+                        && segment.indices + dc.indices_count <= index_limit
+                });
+            if !fits {
+                self.segments.push(FlushSegment {
+                    first_vertex: dc.vertices_start,
+                    vertices: 0,
+                    first_index: self.indices.len(),
+                    indices: 0,
+                });
+            }
+            let segment_index = self.segments.len() - 1;
+            let segment = &mut self.segments[segment_index];
+            // geometry() only ever appends to the newest draw call.
+            assert_eq!(
+                segment.first_vertex + segment.vertices,
+                dc.vertices_start,
+                "draw call vertices must be contiguous"
+            );
+            let offset = segment.vertices;
+            self.placements.push((segment_index, segment.indices));
+            self.indices.extend(
+                batch_indices[dc.indices_start..dc.indices_start + dc.indices_count]
+                    .iter()
+                    .map(|&index| {
+                        u16::try_from(usize::from(index) + offset)
+                            .expect("segment-relative index must fit u16")
+                    }),
+            );
+            segment.vertices += dc.vertices_count;
+            segment.indices += dc.indices_count;
+        }
     }
 }
 
@@ -628,8 +711,10 @@ impl QuadGl {
                 capture: false,
             },
             draw_calls: Vec::with_capacity(200),
-            draw_calls_bindings: Vec::with_capacity(200),
             draw_calls_count: 0,
+            flush_buffers: Vec::new(),
+            flush_plan: FlushPlan::default(),
+            uniform_cache: Vec::new(),
             start_time: miniquad::date::now(),
 
             white_texture,
@@ -638,7 +723,7 @@ impl QuadGl {
             max_vertices,
             max_indices,
             vertex_limit,
-            geometry_rejection_warned: false,
+            geometry_rejections_warned: Vec::new(),
         }
     }
 
@@ -727,73 +812,163 @@ impl QuadGl {
 
     pub fn draw(&mut self, ctx: &mut dyn miniquad::RenderingBackend, projection: glam::Mat4) {
         let white_texture = self.white_texture;
-
-        for _ in 0..self.draw_calls.len() - self.draw_calls_bindings.len() {
-            let vertex_buffer = ctx.new_buffer(
-                BufferType::VertexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<Vertex>(self.max_vertices),
-            );
-            let index_buffer = ctx.new_buffer(
-                BufferType::IndexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<u16>(self.max_indices),
-            );
-            let bindings = Bindings {
-                vertex_buffers: vec![vertex_buffer],
-                index_buffer,
-                images: vec![white_texture, white_texture],
-            };
-
-            self.draw_calls_bindings.push(bindings);
+        let count = self.draw_calls_count;
+        if count == 0 {
+            self.batch_index_buffer.clear();
+            self.batch_vertex_buffer.clear();
+            return;
         }
-        assert_eq!(self.draw_calls_bindings.len(), self.draw_calls.len());
 
-        let (screen_width, screen_height) = miniquad::window::screen_size();
-        let time = (miniquad::date::now() - self.start_time) as f32;
-        let time = glam::vec4(time, time.sin(), time.cos(), 0.);
-
-        for (dc, bindings) in self.draw_calls[0..self.draw_calls_count]
-            .iter_mut()
-            .zip(self.draw_calls_bindings.iter_mut())
-        {
-            let pipeline = self.pipelines.get_quad_pipeline_mut(dc.pipeline);
-
-            let (width, height) = if let Some(render_pass) = dc.render_pass.as_ref() {
-                let render_texture = ctx.render_pass_texture(render_pass.raw_miniquad_id());
-                let (width, height) = ctx.texture_size(render_texture);
-                (width, height)
-            } else {
-                (screen_width as u32, screen_height as u32)
-            };
-
-            if pipeline.wants_screen_texture {
-                self.state
-                    .snapshotter
-                    .snapshot(ctx, dc.render_pass.as_ref());
+        // Upload each segment once, then draw its calls at index offsets.
+        // Miniquad's Metal backend only draws from element 0 and binds uniforms
+        // per render encoder, so it keeps one call per segment and pass state.
+        let metal = ctx.info().backend == Backend::Metal;
+        let index_limit = self.max_indices.max(3 * (u16::MAX as usize + 1));
+        self.flush_plan.build(
+            &self.draw_calls[..count],
+            &self.batch_index_buffer,
+            self.vertex_limit,
+            index_limit,
+            metal,
+        );
+        for (slot, segment) in self.flush_plan.segments.iter().enumerate() {
+            let reusable = self.flush_buffers.get(slot).is_some_and(|buffers| {
+                buffers.vertex_capacity >= segment.vertices
+                    && buffers.index_capacity >= segment.indices
+            });
+            if !reusable {
+                let (previous_vertices, previous_indices) =
+                    self.flush_buffers.get(slot).map_or((0, 0), |buffers| {
+                        (buffers.vertex_capacity, buffers.index_capacity)
+                    });
+                // Grow geometrically within the u16-addressable segment limits.
+                let vertex_capacity = segment
+                    .vertices
+                    .max(self.max_vertices)
+                    .max(previous_vertices.saturating_mul(2))
+                    .min(self.vertex_limit);
+                let index_capacity = segment
+                    .indices
+                    .max(self.max_indices)
+                    .max(previous_indices.saturating_mul(2))
+                    .min(index_limit);
+                let bindings = Bindings {
+                    vertex_buffers: vec![ctx.new_buffer(
+                        BufferType::VertexBuffer,
+                        BufferUsage::Stream,
+                        BufferSource::empty::<Vertex>(vertex_capacity),
+                    )],
+                    index_buffer: ctx.new_buffer(
+                        BufferType::IndexBuffer,
+                        BufferUsage::Stream,
+                        BufferSource::empty::<u16>(index_capacity),
+                    ),
+                    images: vec![white_texture, white_texture],
+                };
+                let buffers = FlushBuffers {
+                    bindings,
+                    vertex_capacity,
+                    index_capacity,
+                };
+                if slot < self.flush_buffers.len() {
+                    let old = std::mem::replace(&mut self.flush_buffers[slot], buffers);
+                    ctx.delete_buffer(old.bindings.vertex_buffers[0]);
+                    ctx.delete_buffer(old.bindings.index_buffer);
+                } else {
+                    self.flush_buffers.push(buffers);
+                }
             }
-
-            if let Some(render_pass) = dc.render_pass.as_ref() {
-                ctx.begin_pass(Some(render_pass.raw_miniquad_id()), PassAction::Nothing);
-            } else {
-                ctx.begin_default_pass(PassAction::Nothing);
-            }
-
+            let bindings = &self.flush_buffers[slot].bindings;
             ctx.buffer_update(
                 bindings.vertex_buffers[0],
                 BufferSource::slice(
                     &self.batch_vertex_buffer
-                        [dc.vertices_start..(dc.vertices_start + dc.vertices_count)],
+                        [segment.first_vertex..segment.first_vertex + segment.vertices],
                 ),
             );
             ctx.buffer_update(
                 bindings.index_buffer,
                 BufferSource::slice(
-                    &self.batch_index_buffer
-                        [dc.indices_start..(dc.indices_start + dc.indices_count)],
+                    &self.flush_plan.indices
+                        [segment.first_index..segment.first_index + segment.indices],
                 ),
             );
+        }
 
+        let (screen_width, screen_height) = miniquad::window::screen_size();
+        let time = (miniquad::date::now() - self.start_time) as f32;
+        let time = glam::vec4(time, time.sin(), time.cos(), 0.);
+
+        // Consecutive calls into one target share a pass. State already applied
+        // inside the open pass is not re-sent; a new pass resets that tracking.
+        let mut open_pass: Option<Option<miniquad::RenderPass>> = None;
+        let mut applied_pipeline = None;
+        let mut applied_viewport = None;
+        let mut applied_scissor = None;
+        let mut applied_bindings: Option<(GlPipeline, usize)> = None;
+        // Uniform values are per-program GL state and persist across passes.
+        self.uniform_cache.clear();
+
+        for (dc, &(slot, base_element)) in self.draw_calls[..count]
+            .iter_mut()
+            .zip(&self.flush_plan.placements)
+        {
+            let pipeline = self.pipelines.get_quad_pipeline_mut(dc.pipeline);
+            let target = dc.render_pass.as_ref().map(|pass| pass.raw_miniquad_id());
+
+            let (width, height) = if let Some(render_pass) = target {
+                let render_texture = ctx.render_pass_texture(render_pass);
+                ctx.texture_size(render_texture)
+            } else {
+                (screen_width as u32, screen_height as u32)
+            };
+
+            if pipeline.wants_screen_texture {
+                // The snapshot must observe every earlier call and runs its own pass.
+                if open_pass.take().is_some() {
+                    ctx.end_render_pass();
+                }
+                self.state
+                    .snapshotter
+                    .snapshot(ctx, dc.render_pass.as_ref());
+            }
+
+            // An MSAA target's texture is its resolve copy, updated when its pass
+            // ends. A call sampling its own target must see the earlier calls.
+            if open_pass == Some(target) {
+                if let Some(pass) = dc.render_pass.as_ref() {
+                    let own = Some(&pass.color_texture);
+                    if dc.texture.as_ref() == own
+                        || pipeline
+                            .textures_data
+                            .values()
+                            .any(|texture| Some(texture) == own)
+                    {
+                        ctx.end_render_pass();
+                        open_pass = None;
+                    }
+                }
+            }
+
+            if open_pass != Some(target) {
+                if open_pass.is_some() {
+                    ctx.end_render_pass();
+                }
+                if metal {
+                    self.uniform_cache.clear();
+                }
+                ctx.begin_pass(target, PassAction::Nothing);
+                open_pass = Some(target);
+                applied_pipeline = None;
+                applied_viewport = None;
+                applied_scissor = None;
+                // Ending a pass resets the cached buffer bindings.
+                applied_bindings = None;
+            }
+
+            let bindings = &mut self.flush_buffers[slot].bindings;
+            let previous_images = bindings.images.len();
+            let previous_texture = bindings.images[0];
             bindings.images[0] = dc
                 .texture
                 .as_ref()
@@ -813,18 +988,33 @@ impl QuadGl {
                 }
             }
 
-            ctx.apply_pipeline(&pipeline.pipeline);
-            if let Some((x, y, w, h)) = dc.viewport {
-                ctx.apply_viewport(x, y, w, h);
-            } else {
-                ctx.apply_viewport(0, 0, width as i32, height as i32);
+            if applied_pipeline != Some(dc.pipeline) {
+                ctx.apply_pipeline(&pipeline.pipeline);
+                applied_pipeline = Some(dc.pipeline);
+                applied_bindings = None;
             }
-            if let Some(clip) = dc.clip {
-                ctx.apply_scissor_rect(clip.0, height as i32 - (clip.1 + clip.3), clip.2, clip.3);
-            } else {
-                ctx.apply_scissor_rect(0, 0, width as i32, height as i32);
+            let viewport = dc.viewport.unwrap_or((0, 0, width as i32, height as i32));
+            if applied_viewport != Some(viewport) {
+                ctx.apply_viewport(viewport.0, viewport.1, viewport.2, viewport.3);
+                applied_viewport = Some(viewport);
             }
-            ctx.apply_bindings(bindings);
+            let scissor = dc.clip.map_or((0, 0, width as i32, height as i32), |clip| {
+                (clip.0, height as i32 - (clip.1 + clip.3), clip.2, clip.3)
+            });
+            if applied_scissor != Some(scissor) {
+                ctx.apply_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
+                applied_scissor = Some(scissor);
+            }
+            // Only built-in pipelines (no extra textures) may reuse bindings; the
+            // screen texture slot stays fixed within one pass.
+            if applied_bindings != Some((dc.pipeline, slot))
+                || previous_texture != bindings.images[0]
+                || previous_images != 2
+                || !pipeline.textures.is_empty()
+            {
+                ctx.apply_bindings(bindings);
+                applied_bindings = Some((dc.pipeline, slot));
+            }
 
             if let Some(ref uniforms) = dc.uniforms {
                 for i in 0..uniforms.len() {
@@ -834,19 +1024,42 @@ impl QuadGl {
             pipeline.set_uniform("Projection", projection);
             pipeline.set_uniform("Model", dc.model);
             pipeline.set_uniform("_Time", time);
-            ctx.apply_uniforms_from_bytes(
-                pipeline.uniforms_data.as_ptr(),
-                pipeline.uniforms_data.len(),
-            );
+            let uniforms = &pipeline.uniforms_data.0;
+            match self
+                .uniform_cache
+                .iter_mut()
+                .find(|(cached, _)| *cached == pipeline.shader)
+            {
+                Some((_, applied)) if applied == uniforms => {}
+                cached => {
+                    ctx.apply_uniforms_from_bytes(
+                        pipeline.uniforms_data.as_ptr(),
+                        pipeline.uniforms_data.len(),
+                    );
+                    match cached {
+                        Some((_, applied)) => applied.clone_from(uniforms),
+                        None => self.uniform_cache.push((pipeline.shader, uniforms.clone())),
+                    }
+                }
+            }
             ctx.draw(
-                0,
+                i32::try_from(base_element).expect("segment index offset must fit GLint"),
                 i32::try_from(dc.indices_count).expect("validated index count must fit GLsizei"),
                 1,
             );
-            ctx.end_render_pass();
 
             if dc.capture {
-                telemetry::track_drawcall(ctx, &pipeline.pipeline, bindings, dc.indices_count);
+                // Capture replays the call into its own pass. End ours first so
+                // its MSAA resolve runs before another pass becomes current.
+                ctx.end_render_pass();
+                open_pass = None;
+                telemetry::track_drawcall(
+                    ctx,
+                    &pipeline.pipeline,
+                    bindings,
+                    base_element,
+                    dc.indices_count,
+                );
             }
 
             dc.texture = None;
@@ -855,6 +1068,9 @@ impl QuadGl {
             dc.indices_count = 0;
             dc.vertices_start = 0;
             dc.indices_start = 0;
+        }
+        if open_pass.is_some() {
+            ctx.end_render_pass();
         }
 
         self.draw_calls_count = 0;
@@ -867,12 +1083,7 @@ impl QuadGl {
         self.state.texture = None;
         self.state.render_pass = None;
         self.draw_calls.clear();
-        for bindings in self.draw_calls_bindings.drain(..) {
-            for buffer in bindings.vertex_buffers {
-                ctx.delete_buffer(buffer);
-            }
-            ctx.delete_buffer(bindings.index_buffer);
-        }
+        self.release_flush_buffers(ctx);
         let mut shaders = std::collections::HashSet::new();
         for pipeline in &mut self.pipelines.pipelines {
             if let Some(pipeline) = pipeline.take() {
@@ -1063,8 +1274,13 @@ impl QuadGl {
         dc.texture = self.state.texture.clone();
     }
 
-    pub(crate) fn reject_geometry(&mut self, vertices: usize, indices: usize, reason: &str) {
-        if cfg!(debug_assertions) || !self.geometry_rejection_warned {
+    pub(crate) fn reject_geometry(
+        &mut self,
+        vertices: usize,
+        indices: usize,
+        reason: &'static str,
+    ) {
+        if cfg!(debug_assertions) || !self.geometry_rejections_warned.contains(&reason) {
             let message = format!(
                 "{reason}; submitted {vertices} vertices/{indices} indices, effective capacity {} vertices/{} indices. Entire call rejected; submit smaller meshes or increase capacity and use valid local indices",
                 self.max_vertices, self.max_indices,
@@ -1072,7 +1288,7 @@ impl QuadGl {
             if cfg!(debug_assertions) {
                 panic!("{message}");
             }
-            self.geometry_rejection_warned = true;
+            self.geometry_rejections_warned.push(reason);
             warn!("{}", message);
         }
     }
@@ -1209,26 +1425,16 @@ impl QuadGl {
             draw_call.indices_start = 0;
             draw_call.vertices_start = 0;
         }
-        for binding in &mut self.draw_calls_bindings {
-            ctx.delete_buffer(binding.index_buffer);
-            for vertex_buffer in &binding.vertex_buffers {
-                ctx.delete_buffer(*vertex_buffer);
+        // Shared buffers are sized by use; reallocate them for the new limits.
+        self.release_flush_buffers(ctx);
+    }
+
+    fn release_flush_buffers(&mut self, ctx: &mut dyn miniquad::RenderingBackend) {
+        for buffers in self.flush_buffers.drain(..) {
+            for buffer in buffers.bindings.vertex_buffers {
+                ctx.delete_buffer(buffer);
             }
-            let vertex_buffer = ctx.new_buffer(
-                BufferType::VertexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<Vertex>(self.max_vertices),
-            );
-            let index_buffer = ctx.new_buffer(
-                BufferType::IndexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<u16>(self.max_indices),
-            );
-            *binding = Bindings {
-                vertex_buffers: vec![vertex_buffer],
-                index_buffer,
-                images: vec![self.white_texture, self.white_texture],
-            };
+            ctx.delete_buffer(buffers.bindings.index_buffer);
         }
     }
 }
@@ -1412,6 +1618,149 @@ mod uniform_tests {
             ])
             .is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod flush_plan_tests {
+    use super::*;
+
+    // Lay out draw calls exactly as geometry() does: contiguous, local indices.
+    fn calls(sizes: &[(usize, usize)], salt: u32) -> (Vec<DrawCall>, Vec<u16>) {
+        let mut draw_calls = Vec::new();
+        let mut indices = Vec::new();
+        let mut vertices = 0;
+        let mut state = salt | 1;
+        for &(vertex_count, index_count) in sizes {
+            let mut dc = DrawCall::new(
+                None,
+                glam::Mat4::IDENTITY,
+                DrawMode::Triangles,
+                GlPipeline(0),
+                None,
+                None,
+            );
+            dc.vertices_start = vertices;
+            dc.indices_start = indices.len();
+            dc.vertices_count = vertex_count;
+            dc.indices_count = index_count;
+            for i in 0..index_count {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                // Always include the call's last vertex to exercise the bound.
+                let local = if i == 0 {
+                    vertex_count - 1
+                } else {
+                    state as usize % vertex_count
+                };
+                indices.push(local as u16);
+            }
+            vertices += vertex_count;
+            draw_calls.push(dc);
+        }
+        (draw_calls, indices)
+    }
+
+    fn check(
+        sizes: &[(usize, usize)],
+        vertex_limit: usize,
+        index_limit: usize,
+        salt: u32,
+    ) -> FlushPlan {
+        let (draw_calls, batch) = calls(sizes, salt);
+        let mut plan = FlushPlan::default();
+        plan.build(&draw_calls, &batch, vertex_limit, index_limit, false);
+        assert_eq!(plan.placements.len(), draw_calls.len());
+        assert_eq!(plan.indices.len(), batch.len());
+        let (mut next_vertex, mut next_index) = (0, 0);
+        for segment in &plan.segments {
+            // Segments tile the batch in order and stay addressable.
+            assert_eq!(
+                (segment.first_vertex, segment.first_index),
+                (next_vertex, next_index)
+            );
+            assert!(segment.vertices <= vertex_limit && segment.indices <= index_limit);
+            next_vertex += segment.vertices;
+            next_index += segment.indices;
+        }
+        assert_eq!(
+            (next_vertex, next_index),
+            (
+                draw_calls.iter().map(|dc| dc.vertices_count).sum(),
+                batch.len()
+            )
+        );
+        for (dc, &(slot, base)) in draw_calls.iter().zip(&plan.placements) {
+            let segment = plan.segments[slot];
+            let rebased = &plan.indices[segment.first_index + base..][..dc.indices_count];
+            for (&local, &global) in batch[dc.indices_start..][..dc.indices_count]
+                .iter()
+                .zip(rebased)
+            {
+                // Each rebased index names the same batch vertex as the local one.
+                assert_eq!(
+                    segment.first_vertex + usize::from(global),
+                    dc.vertices_start + usize::from(local)
+                );
+                assert!(usize::from(global) < segment.vertices);
+            }
+        }
+        plan
+    }
+
+    #[test]
+    fn segments_never_exceed_the_webgl2_restart_limit() {
+        let plan = check(&[(65_534, 6), (1, 3), (1, 3)], 65_535, 196_608, 1);
+        assert_eq!(plan.placements, [(0, 0), (0, 6), (1, 0)]);
+        assert_eq!(plan.indices.iter().max(), Some(&65_534));
+        let plan = check(&[(65_536, 3), (1, 3)], 65_536, 196_608, 2);
+        assert_eq!(plan.placements, [(0, 0), (1, 0)]);
+        assert_eq!(plan.indices[0], 65_535);
+    }
+
+    #[test]
+    fn index_count_also_bounds_a_segment() {
+        let plan = check(&[(3, 6), (3, 6), (3, 6)], 65_535, 12, 3);
+        assert_eq!(plan.placements, [(0, 0), (0, 6), (1, 0)]);
+    }
+
+    #[test]
+    fn mixed_call_sequences_rebase_exactly() {
+        let mut state = 0x5eed_u32;
+        for round in 0..if cfg!(miri) { 6 } else { 64 } {
+            let sizes: Vec<_> = (0..1 + round % 17)
+                .map(|_| {
+                    state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    let vertices = 1 + (state >> 8) as usize % 40_000;
+                    (vertices, 1 + (state >> 4) as usize % 300)
+                })
+                .collect();
+            check(
+                &sizes,
+                if round % 2 == 0 { 65_535 } else { 65_536 },
+                196_608,
+                round + 7,
+            );
+        }
+    }
+
+    #[test]
+    fn metal_keeps_one_call_per_segment() {
+        // Metal can only draw from element 0: every call gets its own upload.
+        let (draw_calls, batch) = calls(&[(3, 3), (4, 6), (3, 3)], 9);
+        let mut plan = FlushPlan::default();
+        plan.build(&draw_calls, &batch, 65_535, 196_608, true);
+        assert_eq!(plan.placements, [(0, 0), (1, 0), (2, 0)]);
+        assert_eq!(plan.indices, batch);
+    }
+
+    #[test]
+    #[should_panic(expected = "draw call vertices must be contiguous")]
+    fn non_contiguous_calls_are_rejected() {
+        let (mut draw_calls, batch) = calls(&[(3, 3), (3, 3)], 4);
+        draw_calls[1].vertices_start += 1;
+        FlushPlan::default().build(&draw_calls, &batch, 65_535, 196_608, false);
     }
 }
 
@@ -1624,9 +1973,31 @@ mod capacity_tests {
                         assert_eq!(gl.draw_calls_count, 2);
                         assert_eq!(&gl.batch_index_buffer[9..], [0, 1, 2]);
                         gl.draw(ctx, glam::Mat4::IDENTITY);
-                        for bindings in &gl.draw_calls_bindings {
+                        // A full u16 domain fills one shared segment; the next call
+                        // starts another rather than wrapping its rebased indices.
+                        assert_eq!(
+                            gl.flush_plan.segments,
+                            [
+                                FlushSegment {
+                                    first_vertex: 0,
+                                    vertices: 65_536,
+                                    first_index: 0,
+                                    indices: 9
+                                },
+                                FlushSegment {
+                                    first_vertex: 65_536,
+                                    vertices: 3,
+                                    first_index: 9,
+                                    indices: 3
+                                },
+                            ]
+                        );
+                        assert_eq!(gl.flush_plan.placements, [(0, 0), (1, 0)]);
+                        assert_eq!(&gl.flush_plan.indices[9..], [0, 1, 2]);
+                        assert_eq!(gl.flush_buffers.len(), 2);
+                        for buffers in &gl.flush_buffers {
                             assert_eq!(
-                                ctx.buffer_size(bindings.vertex_buffers[0]),
+                                ctx.buffer_size(buffers.bindings.vertex_buffers[0]),
                                 65_536 * std::mem::size_of::<Vertex>()
                             );
                         }
@@ -1642,7 +2013,7 @@ mod capacity_tests {
                         assert_eq!(gl.draw_calls[0].indices_count, 69_999);
                         gl.draw(ctx, glam::Mat4::IDENTITY);
                         assert_eq!(
-                            ctx.buffer_size(gl.draw_calls_bindings[0].index_buffer),
+                            ctx.buffer_size(gl.flush_buffers[0].bindings.index_buffer),
                             140_000
                         );
                     },
@@ -1690,7 +2061,7 @@ mod capacity_tests {
                         gl.geometry(&vertices(4), &[0, 1, 2, 0, 2, 3]);
                         gl.draw(ctx, glam::Mat4::IDENTITY);
                         assert_eq!(
-                            ctx.buffer_size(gl.draw_calls_bindings[0].vertex_buffers[0]),
+                            ctx.buffer_size(gl.flush_buffers[0].bindings.vertex_buffers[0]),
                             4 * std::mem::size_of::<Vertex>()
                         );
                     },
@@ -1840,9 +2211,14 @@ mod capacity_tests {
                                 assert_eq!(context.gl.batch_vertex_buffer.len(), 4);
                                 assert_eq!(context.gl.batch_index_buffer, [0, 1, 2, 0, 2, 3]);
                                 assert!(context.gl.state.pipeline.is_some());
+                                // Repeated custom-material rejections warn once.
                                 assert_eq!(
-                                    context.gl.geometry_rejection_warned,
-                                    !cfg!(debug_assertions)
+                                    context.gl.geometry_rejections_warned,
+                                    if cfg!(debug_assertions) {
+                                        vec![]
+                                    } else {
+                                        vec!["geometry exceeds draw call capacity"]
+                                    }
                                 );
                                 context.gl.clear_draw_calls();
                             });
@@ -1885,6 +2261,53 @@ mod capacity_tests {
                             failed.push("queued public setter preserves state");
                         }
                         crate::with_context(|context| context.gl.clear_draw_calls());
+                        // An MSAA target's texture is its resolve copy. Drawing it into
+                        // the same target within one flush must see earlier calls.
+                        gl_set_drawcall_buffer_capacity(10_000, 5_000);
+                        // Drop the model matrix and scissor left by the case above.
+                        crate::with_context(|context| context.gl.reset());
+                        if catch_unwind(AssertUnwindSafe(|| {
+                            let red = crate::color::Color::new(1., 0., 0., 1.);
+                            let msaa = crate::texture::render_target_ex(
+                                8,
+                                8,
+                                crate::texture::RenderTargetParams {
+                                    sample_count: 4,
+                                    depth: false,
+                                },
+                            );
+                            let mut camera = Camera2D::from_display_rect(Rect::new(0., 0., 8., 8.));
+                            camera.render_target = Some(msaa.clone());
+                            set_camera(&camera);
+                            crate::window::clear_background(crate::color::BLACK);
+                            draw_rectangle(0., 0., 4., 8., red);
+                            crate::texture::draw_texture_ex(
+                                &msaa.texture,
+                                4.,
+                                0.,
+                                WHITE,
+                                crate::texture::DrawTextureParams {
+                                    source: Some(Rect::new(0., 0., 4., 8.)),
+                                    ..Default::default()
+                                },
+                            );
+                            crate::camera::set_default_camera();
+                            let image = msaa.texture.get_texture_data();
+                            for y in 0..8 {
+                                for x in 0..8 {
+                                    let pixel = image.get_pixel(x, y);
+                                    assert_eq!(
+                                        (pixel.r, pixel.g, pixel.b),
+                                        (1., 0., 0.),
+                                        "pixel {x},{y}"
+                                    );
+                                }
+                            }
+                        }))
+                        .is_err()
+                        {
+                            failed.push("msaa target samples its own earlier calls");
+                        }
                         assert!(
                             failed.is_empty(),
                             "failed public capacity cases: {failed:?}"

@@ -38,12 +38,17 @@ def validate(result, version, profile):
     if [p["name"] for p in result["phases"]] != names:
         raise AssertionError("Missing/reordered policy phases")
     diagnostics = [m for m in result["messages"] if "Entire call rejected" in m]
-    if len(diagnostics) != (1 if profile == "release" else 0):
+    # Release warns once per distinct reason: the first oversized mesh and the
+    # first invalid index. Later repeats (13 indices, custom arc) stay silent.
+    expected = [("geometry exceeds draw call capacity", "9 vertices/3 indices"),
+                ("geometry index is outside its vertex slice", "3 vertices/3 indices")]
+    if len(diagnostics) != (len(expected) if profile == "release" else 0):
         raise AssertionError(diagnostics)
-    if diagnostics and not all(s in diagnostics[0] for s in (
-        "9 vertices/3 indices", "8 vertices/12 indices", "submit smaller meshes", "valid local indices"
-    )):
-        raise AssertionError(diagnostics)
+    for message, (reason, counts) in zip(diagnostics, expected):
+        if not all(s in message for s in (
+            reason, counts, "8 vertices/12 indices", "submit smaller meshes", "valid local indices"
+        )):
+            raise AssertionError(diagnostics)
     for phase in result["phases"]:
         name, draws = phase["name"], phase["draws"]
         if not phase.get("completePixels") or phase.get("glError") != 0 or not draws:

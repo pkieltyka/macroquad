@@ -35,7 +35,13 @@ def evidence(profile="debug"):
     return dict(errors=[], completed=True, context=dict(version="WebGL 2.0", attributes=dict(antialias=False),
                 requests=[dict(attributes=dict(antialias=False))], samples=0, sampleBuffers=0),
                 resources=dict(createdBuffers=2, liveBuffers=0), phases=phases,
-                messages=["submitted 9 vertices/3 indices, effective capacity 8 vertices/12 indices. Entire call rejected; submit smaller meshes and use valid local indices"] if profile == "release" else [])
+                messages=RELEASE_DIAGNOSTICS if profile == "release" else [])
+
+
+RELEASE_DIAGNOSTICS = [
+    "geometry exceeds draw call capacity; submitted 9 vertices/3 indices, effective capacity 8 vertices/12 indices. Entire call rejected; submit smaller meshes or increase capacity and use valid local indices",
+    "geometry index is outside its vertex slice; submitted 3 vertices/3 indices, effective capacity 8 vertices/12 indices. Entire call rejected; submit smaller meshes or increase capacity and use valid local indices",
+]
 
 
 class PolicyContract(unittest.TestCase):
@@ -67,8 +73,9 @@ class PolicyContract(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(AssertionError):
                 policy.validate(result, 2, "debug")
 
-    def test_release_diagnostic_once_and_specific(self):
-        for messages in [[], ["Entire call rejected"], evidence("release")["messages"] * 2]:
+    def test_release_diagnostic_once_per_reason_and_specific(self):
+        for messages in [[], ["Entire call rejected"], RELEASE_DIAGNOSTICS[:1], RELEASE_DIAGNOSTICS * 2,
+                         RELEASE_DIAGNOSTICS[::-1], [RELEASE_DIAGNOSTICS[0]] * 2]:
             result = evidence("release")
             result["messages"] = messages
             with self.assertRaises(AssertionError):

@@ -1275,14 +1275,28 @@ pub(crate) mod ui_context {
         pub(crate) fn draw(&mut self) {
             self.ui_draw_list.clear();
             self.ui.render(&mut self.ui_draw_list);
-            if !self.ui_draw_list.is_empty() {
-                let (max_v, max_i) = crate::with_context(|context| context.gl.drawcall_capacity());
-                // Reject before material creation or any partial UI submission.
-                assert!(
-                    self.ui_draw_list.iter().all(|list| list.indices.is_empty())
-                        || (max_v >= 3 && max_i >= 3),
-                    "UI requires draw call capacities of at least 3 vertices and 3 indices"
-                );
+            let (max_v, max_i) = crate::with_context(|context| context.gl.drawcall_capacity());
+            // Reject before material creation or any partial UI submission: a
+            // debug panic, or one release warning like other geometry. Rejected
+            // frames still reach the per-frame UI reset below.
+            let rejected = (max_v < 3 || max_i < 3)
+                && self
+                    .ui_draw_list
+                    .iter()
+                    .any(|list| !list.indices.is_empty());
+            if rejected {
+                let (vertices, indices) = self.ui_draw_list.iter().fold((0, 0), |(v, i), list| {
+                    (v + list.vertices.len(), i + list.indices.len())
+                });
+                crate::with_context(|context| {
+                    context.gl.reject_geometry(
+                        vertices,
+                        indices,
+                        "UI requires draw call capacities of at least 3 vertices and 3 indices",
+                    )
+                });
+            }
+            if !rejected && !self.ui_draw_list.is_empty() {
                 if self.material.is_none() {
                     self.material = Some(
                         load_material(
@@ -1420,6 +1434,35 @@ pub(crate) mod ui_context {
                     with(|context| context.material.clone()),
                     Some(first.clone())
                 );
+
+                // Undersized capacities reject UI: a debug panic, otherwise a
+                // skipped submission that still resets the UI every frame.
+                crate::window::gl_set_drawcall_buffer_capacity(2, 2);
+                let mut rendered = vec![];
+                for _ in 0..2 {
+                    crate::ui::root_ui(|ui| ui.label(None, "rejected UI"));
+                    if cfg!(debug_assertions) {
+                        crate::test_backend::assert_panics_with(
+                            || with(|context| context.draw()),
+                            "UI requires draw call capacities of at least 3 vertices and 3 indices",
+                        );
+                        break;
+                    }
+                    with(|context| context.draw());
+                    rendered.push(with(|context| {
+                        context
+                            .ui_draw_list
+                            .iter()
+                            .map(|list| list.indices.len())
+                            .sum::<usize>()
+                    }));
+                }
+                if !cfg!(debug_assertions) {
+                    assert!(rendered[0] > 0);
+                    assert_eq!(rendered[0], rendered[1], "rejected UI accumulated");
+                }
+                crate::window::gl_set_drawcall_buffer_capacity(10_000, 5_000);
+                with(|context| context.ui.new_frame(get_frame_time()));
             });
         }
     }

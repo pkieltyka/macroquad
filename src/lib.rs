@@ -1173,18 +1173,20 @@ pub mod conf {
         /// (index 65,535 is reserved for primitive restart), otherwise 65,536.
         /// Larger configured values use that limit. Defaults to 10,000.
         ///
-        /// Individual meshes must fit both capacities and have valid local indices;
-        /// oversized or invalid indexed geometry panics in debug builds. Release
-        /// builds reject the whole call and warn once per renderer, with submitted
-        /// counts and effective capacities; no partial geometry is submitted.
+        /// Individual meshes must fit both capacities and have valid local indices.
+        /// With `debug_assertions` (the default dev profile, including a plain
+        /// `cargo build` for WASM, where a panic stops the module) oversized or
+        /// invalid indexed geometry panics. Otherwise the whole call is rejected
+        /// and a warning naming the submitted counts and effective capacities is
+        /// logged once per distinct reason; no partial geometry is submitted.
         /// Empty index slices do not submit geometry. Zero and small capacities are
-        /// allowed. Default-material 2D shapes split into ordered triangles when
-        /// needed (at least 3/3); custom materials and public meshes must fit.
-        /// Splitting can produce multiple draw/capture entries; custom material
-        /// index/primitive and screen-texture feedback semantics stay atomic.
-        /// Built-in UI splits its
-        /// private triangle lists to fit; nonempty UI requires at least 3 vertices
-        /// and 3 indices, and rejects smaller capacities before submitting any UI.
+        /// allowed. Default-material 2D shapes (not textures or text) split into
+        /// ordered triangles when needed (at least 3/3); custom materials and
+        /// public meshes must fit. Splitting can produce multiple draw/capture
+        /// entries; custom material index/primitive and screen-texture feedback
+        /// semantics stay atomic. Built-in UI splits its private triangle lists to
+        /// fit; nonempty UI requires at least 3 vertices and 3 indices and is
+        /// rejected under the same policy, before any of it is submitted.
         pub draw_call_vertex_capacity: usize,
         /// Maximum number of indices per draw call, independently of u16 index
         /// values. Defaults to 5,000. Must fit the backend's signed draw count and

@@ -43,6 +43,8 @@ struct ShaderInternal {
     program: GLuint,
     images: Vec<ShaderImage>,
     uniforms: Vec<ShaderUniform>,
+    // Sampler units are fixed by image order: program state set on first bind.
+    samplers_assigned: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -566,6 +568,7 @@ impl GlContext {
                 textures: Textures(vec![]),
                 info,
                 cache: GlCache {
+                    active_texture: None,
                     stored_index_buffer: 0,
                     stored_index_type: None,
                     stored_vertex_buffer: 0,
@@ -656,6 +659,7 @@ fn load_shader_internal(
             program,
             images,
             uniforms,
+            samplers_assigned: false,
         })
     }
 }
@@ -1473,7 +1477,9 @@ impl RenderingBackend for GlContext {
         textures: &[TextureId],
     ) {
         let pip = &self.pipelines[self.cache.cur_pipeline.unwrap().0];
-        let shader = &self.shaders[pip.shader.0];
+        let shader_index = pip.shader.0;
+        let shader = &self.shaders[shader_index];
+        let assign_samplers = !shader.samplers_assigned;
 
         for (n, shader_image) in shader.images.iter().enumerate() {
             let bindings_image = textures
@@ -1487,10 +1493,14 @@ impl RenderingBackend for GlContext {
                 };
                 unsafe {
                     self.cache.bind_texture(n, texture.params.kind.into(), raw);
-                    glUniform1i(gl_loc, n as i32);
+                    if assign_samplers {
+                        glUniform1i(gl_loc, n as i32);
+                    }
                 }
             }
         }
+        // apply_pipeline made this program current, so the assignment applied.
+        self.shaders[shader_index].samplers_assigned = true;
 
         self.cache.bind_buffer(
             GL_ELEMENT_ARRAY_BUFFER,
@@ -1743,6 +1753,8 @@ impl RenderingBackend for GlContext {
     fn commit_frame(&mut self) {
         self.cache.clear_buffer_bindings();
         self.cache.clear_texture_bindings();
+        // Re-establish the active unit once per frame in case raw GL changed it.
+        self.cache.active_texture = None;
     }
 
     fn draw(&self, base_element: i32, num_elements: i32, num_instances: i32) {

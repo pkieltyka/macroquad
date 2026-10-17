@@ -308,7 +308,16 @@
 
 --- a/src/graphics/gl.rs
 +++ b/src/graphics/gl.rs
-@@ -72,6 +72,18 @@
+@@ -43,6 +43,8 @@
+     program: GLuint,
+     images: Vec<ShaderImage>,
+     uniforms: Vec<ShaderUniform>,
++    // Sampler units are fixed by image order: program state set on first bind.
++    samplers_assigned: bool,
+ }
+
+ #[derive(Clone, Copy, Debug)]
+@@ -72,6 +74,18 @@
  }
 
  impl TextureFormat {
@@ -327,7 +336,7 @@
      fn sized_internal_format(&self) -> GLenum {
          match self {
              TextureFormat::RGB8 => GL_RGB8,
-@@ -189,7 +201,9 @@
+@@ -189,7 +203,9 @@
                  "Multisampling is only supported for render textures"
              );
          }
@@ -338,7 +347,7 @@
 
          if access == TextureAccess::RenderTarget && params.sample_count > 1 {
              let mut renderbuffer: u32 = 0;
-@@ -330,7 +344,10 @@
+@@ -330,7 +346,10 @@
          ctx.cache.store_texture_binding(0);
          ctx.cache.bind_texture(0, self.params.kind.into(), raw);
 
@@ -350,7 +359,23 @@
 
          self.params.width = width;
          self.params.height = height;
-@@ -816,19 +833,31 @@
+@@ -549,6 +568,7 @@
+                 textures: Textures(vec![]),
+                 info,
+                 cache: GlCache {
++                    active_texture: None,
+                     stored_index_buffer: 0,
+                     stored_index_type: None,
+                     stored_vertex_buffer: 0,
+@@ -639,6 +659,7 @@
+             program,
+             images,
+             uniforms,
++            samplers_assigned: false,
+         })
+     }
+ }
+@@ -816,19 +837,31 @@
      }
  }
 
@@ -388,7 +413,7 @@
 
      let features = Features {
          instancing: !gl2,
-@@ -911,12 +940,11 @@
+@@ -911,12 +944,11 @@
      }
 
      fn delete_texture(&mut self, texture: TextureId) {
@@ -402,7 +427,7 @@
              },
              TextureOrRenderbuffer::Renderbuffer(raw) => unsafe {
                  glDeleteRenderbuffers(1, raw as *const _);
-@@ -1166,17 +1194,12 @@
+@@ -1166,18 +1198,13 @@
 
          unsafe { glDeleteFramebuffers(1, &render_pass.gl_fb as *const _) }
 
@@ -416,15 +441,51 @@
 +            for (fb, _) in resolves {
                  unsafe { glDeleteFramebuffers(1, &fb as *const _) }
 -                self.delete_texture(texture);
--            }
--        }
+             }
+         }
 -        if let Some(depth_texture) = render_pass.depth_texture {
 -            self.delete_texture(depth_texture);
-+            }
-         }
+-        }
      }
 
-@@ -1754,3 +1777,46 @@
+     fn new_pipeline(
+@@ -1450,7 +1477,9 @@
+         textures: &[TextureId],
+     ) {
+         let pip = &self.pipelines[self.cache.cur_pipeline.unwrap().0];
+-        let shader = &self.shaders[pip.shader.0];
++        let shader_index = pip.shader.0;
++        let shader = &self.shaders[shader_index];
++        let assign_samplers = !shader.samplers_assigned;
+
+         for (n, shader_image) in shader.images.iter().enumerate() {
+             let bindings_image = textures
+@@ -1464,10 +1493,14 @@
+                 };
+                 unsafe {
+                     self.cache.bind_texture(n, texture.params.kind.into(), raw);
+-                    glUniform1i(gl_loc, n as i32);
++                    if assign_samplers {
++                        glUniform1i(gl_loc, n as i32);
++                    }
+                 }
+             }
+         }
++        // apply_pipeline made this program current, so the assignment applied.
++        self.shaders[shader_index].samplers_assigned = true;
+
+         self.cache.bind_buffer(
+             GL_ELEMENT_ARRAY_BUFFER,
+@@ -1720,6 +1753,8 @@
+     fn commit_frame(&mut self) {
+         self.cache.clear_buffer_bindings();
+         self.cache.clear_texture_bindings();
++        // Re-establish the active unit once per frame in case raw GL changed it.
++        self.cache.active_texture = None;
+     }
+
+     fn draw(&self, base_element: i32, num_elements: i32, num_instances: i32) {
+@@ -1754,3 +1789,46 @@
          }
      }
  }
@@ -473,7 +534,30 @@
 +}
 --- a/src/graphics/gl/cache.rs
 +++ b/src/graphics/gl/cache.rs
-@@ -116,6 +116,25 @@
+@@ -26,6 +26,8 @@
+ }
+
+ pub struct GlCache {
++    /// Texture unit last made active by `bind_texture`; `None` when unknown.
++    pub active_texture: Option<usize>,
+     pub stored_index_buffer: GLuint,
+     pub stored_index_type: Option<u32>,
+     pub stored_vertex_buffer: GLuint,
+@@ -88,7 +90,12 @@
+
+     pub fn bind_texture(&mut self, slot_index: usize, target: GLuint, texture: GLuint) {
+         unsafe {
+-            glActiveTexture(GL_TEXTURE0 + slot_index as GLuint);
++            // Callers such as texture uploads rely on `slot_index` being the
++            // active unit afterwards; only the redundant switch is skipped.
++            if self.active_texture != Some(slot_index) {
++                glActiveTexture(GL_TEXTURE0 + slot_index as GLuint);
++                self.active_texture = Some(slot_index);
++            }
+             if self.textures[slot_index].target != target
+                 || self.textures[slot_index].texture != texture
+             {
+@@ -116,6 +123,25 @@
          self.index_buffer = 0;
      }
 
@@ -499,7 +583,7 @@
      pub fn clear_texture_bindings(&mut self) {
          for ix in 0..MAX_SHADERSTAGE_IMAGES {
              if self.textures[ix].texture != 0 {
-@@ -139,3 +158,106 @@
+@@ -139,3 +165,107 @@
          }
      }
  }
@@ -512,6 +596,7 @@
 +    // without rebinding or disturbing any other texture's actual GL state.
 +    fn cache() -> GlCache {
 +        GlCache {
++            active_texture: None,
 +            stored_index_buffer: 7,
 +            stored_index_type: Some(GL_UNSIGNED_SHORT),
 +            stored_vertex_buffer: 8,

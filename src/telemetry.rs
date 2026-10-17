@@ -440,6 +440,7 @@ pub(crate) fn track_drawcall(
     backend: &mut dyn miniquad::RenderingBackend,
     pipeline: &miniquad::Pipeline,
     bindings: &miniquad::Bindings,
+    base_element: usize,
     indices_count: usize,
 ) {
     let owner = crate::graphics_owner();
@@ -461,7 +462,7 @@ pub(crate) fn track_drawcall(
     );
     backend.apply_pipeline(pipeline);
     backend.apply_bindings(bindings);
-    backend.draw(0, indices_count as _, 1);
+    backend.draw(base_element as _, indices_count as _, 1);
     backend.end_render_pass();
     let drawcall = DrawCallTelemetry {
         indices_count,

@@ -16,7 +16,7 @@ HTMLCanvasElement.prototype.getContext = function(name, ...args) {
     }
     return getContext.call(this,name,...args);
 };
-const stores = new Map(), uploads = new Map();
+const stores = new Map(), uploads = new Map(), cursors = new Map();
 for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
     const allocate = proto.bufferData, upload = proto.bufferSubData, remove = proto.deleteBuffer;
     const create = proto.createBuffer, live = new Set();
@@ -34,7 +34,11 @@ for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.pro
         const binding = this.getParameter(target === this.ARRAY_BUFFER ? this.ARRAY_BUFFER_BINDING : this.ELEMENT_ARRAY_BUFFER_BINDING);
         if (!binding || !stores.has(binding) || !Number.isSafeInteger(stores.get(binding))) evidence.errors.push("Upload allocation is unknown");
         if (offset !== 0 || !Number.isSafeInteger(data.byteLength) || data.byteLength > stores.get(binding)) evidence.errors.push("Upload exceeds allocated buffer");
+        const previous = cursors.get(binding);
+        // A shared flush upload must be fully drawn before it is replaced.
+        if (previous && previous.drawn && previous.used !== previous.size) evidence.errors.push("Uploaded geometry was not fully drawn");
         uploads.set(binding,new Uint8Array(data.buffer,data.byteOffset,data.byteLength).slice());
+        cursors.set(binding,{used:0, drawn:false, size:target === this.ARRAY_BUFFER ? data.byteLength / 40 : data.byteLength});
         return upload.call(this,target,offset,data,...args);
     };
     proto.deleteBuffer = function(buffer) {
@@ -42,7 +46,7 @@ for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.pro
             if (!live.delete(buffer)) evidence.errors.push("Duplicate/unowned buffer deletion");
             else evidence.resources.liveBuffers--;
         }
-        stores.delete(buffer); uploads.delete(buffer);
+        stores.delete(buffer); uploads.delete(buffer); cursors.delete(buffer);
         return remove.call(this,buffer);
     };
 }
@@ -59,14 +63,24 @@ function begin(name) {
         if (typeof original !== "function") continue;
         originals.set(method, original);
         gl[method] = function(mode,count,type,offset,instances=1) {
-            const vertices = uploads.get(gl.getParameter(gl.ARRAY_BUFFER_BINDING));
-            const indices = uploads.get(gl.getParameter(gl.ELEMENT_ARRAY_BUFFER_BINDING));
-            if (!vertices || !indices || type !== gl.UNSIGNED_SHORT || offset !== 0 || instances !== 1 || count * 2 !== indices.byteLength) throw new Error("Unexpected indexed upload/draw contract");
-            const values = new Uint16Array(indices.buffer,indices.byteOffset,count);
-            let maxIndex = 0;
-            for (const index of values) maxIndex = Math.max(maxIndex,index);
-            const vertexCount = vertices.byteLength / 40;
-            if (!Number.isInteger(vertexCount) || maxIndex >= vertexCount) throw new Error("Index exceeds uploaded vertex slice");
+            // Calls in one flush share an upload: each consumes the next index
+            // range and the next vertex range. Every fixture call addresses its
+            // own last vertex, which delimits that range.
+            const vertexBuffer = gl.getVertexAttrib(0,gl.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
+            const indexBuffer = gl.getParameter(gl.ELEMENT_ARRAY_BUFFER_BINDING);
+            const vertices = uploads.get(vertexBuffer), indices = uploads.get(indexBuffer);
+            const vertexCursor = cursors.get(vertexBuffer), indexCursor = cursors.get(indexBuffer);
+            if (!vertices || !indices || type !== gl.UNSIGNED_SHORT || instances !== 1 || offset !== indexCursor.used || offset + count * 2 > indices.byteLength) throw new Error("Unexpected indexed upload/draw contract");
+            indexCursor.used += count * 2;
+            indexCursor.drawn = vertexCursor.drawn = true;
+            const values = new Uint16Array(indices.buffer,indices.byteOffset + offset,count);
+            const base = vertexCursor.used;
+            let maxIndex = 0, minIndex = Infinity;
+            for (const index of values) { maxIndex = Math.max(maxIndex,index); minIndex = Math.min(minIndex,index); }
+            if (!Number.isInteger(vertexCursor.size) || maxIndex >= vertexCursor.size) throw new Error("Index exceeds uploaded vertex slice");
+            if (minIndex < base) throw new Error("Index addresses an earlier call's vertices");
+            vertexCursor.used = maxIndex + 1;
+            const vertexCount = maxIndex + 1 - base;
             if (active.name.startsWith("policy-arc-")) {
                 const data = new DataView(vertices.buffer,vertices.byteOffset,vertices.byteLength);
                 const part = Math.fround(active.arcDegrees * Math.fround(Math.PI / 180));
@@ -81,7 +95,7 @@ function begin(name) {
                     active.sourceIndices++;
                 }
             }
-            active.draws.push({mode,count,vertexCount,maxIndex,indexBytes:indices.byteLength,vertexBytes:vertices.byteLength});
+            active.draws.push({mode,count,vertexCount,maxIndex:maxIndex - base,indexBytes:count * 2,vertexBytes:vertexCount * 40});
             return original.call(this,mode,count,type,offset,instances);
         };
     }
@@ -90,6 +104,8 @@ function begin(name) {
 function end(name) {
     if (!active || active.name !== name) throw new Error("Mismatched capacity phase");
     restore();
+    // Unrelated static buffers (e.g. the screen snapshot quad) are never drawn here.
+    for (const cursor of cursors.values()) if (cursor.drawn && cursor.used !== cursor.size) evidence.errors.push("Uploaded geometry was not fully drawn");
     const pixels = new Uint8Array(64 * 64 * 4);
     gl.readPixels(0,0,64,64,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
     active.boundaryPixels = 0;

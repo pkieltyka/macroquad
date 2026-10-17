@@ -145,7 +145,7 @@ jobs:
           cargo +nightly-2026-10-16 miri test --lib --target ${{ matrix.target }}
           -- ownership::tests texture::ownership_tests telemetry::tests
           experimental::coroutines::tests audio::tests texture::tests tobytes::tests
-          quad_gl::uniform_tests quad_gl::capacity_validation_tests shapes::arc_capacity_tests input::touch_mouse_tests text::atlas::tests
+          quad_gl::uniform_tests quad_gl::capacity_validation_tests quad_gl::flush_plan_tests shapes::arc_capacity_tests input::touch_mouse_tests text::atlas::tests
       - name: Check Xlib reply layouts and cleanup without foreign calls
         run: >-
           CARGO_TARGET_DIR=target/miniquad-miri cargo +nightly-2026-10-16 miri test

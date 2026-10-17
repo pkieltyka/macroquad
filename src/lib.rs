@@ -1174,9 +1174,15 @@ pub mod conf {
         /// Larger configured values use that limit. Defaults to 10,000.
         ///
         /// Individual meshes must fit both capacities and have valid local indices;
-        /// oversized or invalid indexed geometry panics instead of being truncated.
+        /// oversized or invalid indexed geometry panics in debug builds. Release
+        /// builds reject the whole call and warn once per renderer, with submitted
+        /// counts and effective capacities; no partial geometry is submitted.
         /// Empty index slices do not submit geometry. Zero and small capacities are
-        /// allowed, but any indexed geometry must fit them. Built-in UI splits its
+        /// allowed. Default-material 2D shapes split into ordered triangles when
+        /// needed (at least 3/3); custom materials and public meshes must fit.
+        /// Splitting can produce multiple draw/capture entries; custom material
+        /// index/primitive and screen-texture feedback semantics stay atomic.
+        /// Built-in UI splits its
         /// private triangle lists to fit; nonempty UI requires at least 3 vertices
         /// and 3 indices, and rejects smaller capacities before submitting any UI.
         pub draw_call_vertex_capacity: usize,

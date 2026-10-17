@@ -67,6 +67,20 @@ function begin(name) {
             for (const index of values) maxIndex = Math.max(maxIndex,index);
             const vertexCount = vertices.byteLength / 40;
             if (!Number.isInteger(vertexCount) || maxIndex >= vertexCount) throw new Error("Index exceeds uploaded vertex slice");
+            if (active.name.startsWith("policy-arc-")) {
+                const data = new DataView(vertices.buffer,vertices.byteOffset,vertices.byteLength);
+                const part = Math.fround(active.arcDegrees * Math.fround(Math.PI / 180));
+                const span = Math.fround(part / active.segments);
+                for (const index of values) {
+                    const segment = Math.floor(active.sourceIndices / 6), corner = [0,1,2,2,1,3][active.sourceIndices % 6];
+                    const start = Math.fround(segment * span), angle = corner < 2 ? start : Math.fround(start + span);
+                    const radius = corner % 2 ? 20.1875 : 12.25;
+                    const error = Math.hypot(data.getFloat32(index*40,true) - (32+radius*Math.cos(angle)),data.getFloat32(index*40+4,true) - (32+radius*Math.sin(angle)));
+                    active.maxPositionError = Math.max(active.maxPositionError,error);
+                    if (error > 0.002) throw new Error(`Arc source order/index wrap at ${active.sourceIndices}: ${error}`);
+                    active.sourceIndices++;
+                }
+            }
             active.draws.push({mode,count,vertexCount,maxIndex,indexBytes:indices.byteLength,vertexBytes:vertices.byteLength});
             return original.call(this,mode,count,type,offset,instances);
         };
@@ -78,9 +92,25 @@ function end(name) {
     restore();
     const pixels = new Uint8Array(64 * 64 * 4);
     gl.readPixels(0,0,64,64,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+    active.boundaryPixels = 0;
     for (let y=0; y<64; y++) for (let x=0; x<64; x++) {
         const covered = name === "lines" ? y === 32 && x < 48 : y < 16 && x < (name === "index-count" ? 16 : 48);
-        const expected = covered ? x < 16 ? [255,0,0,255] : x < 32 ? [0,255,0,255] : [0,0,255,255] : [0,0,0,255];
+        let expected = covered ? x < 16 ? [255,0,0,255] : x < 32 ? [0,255,0,255] : [0,0,255,255] : [0,0,0,255];
+        if (name.startsWith("policy-arc-")) {
+            const radius = Math.hypot(x+0.5-32,y+0.5-32);
+            const color = name === "policy-arc-default" ? [255,0,0,255] : [0,255,0,255];
+            expected = radius > 12.25 && radius < 20.1875 ? color : [0,0,0,255];
+            // Exact-binary radii put this 64px grid at least 0.068px from either
+            // boundary. Only the 0.005px analytic band permits either covered or
+            // clear pixels; every unambiguous interior/exterior pixel is strict.
+            if (Math.min(Math.abs(radius-12.25),Math.abs(radius-20.1875)) <= 0.005) {
+                active.boundaryPixels++;
+                const at = ((63-y)*64+x)*4;
+                if (![color,[0,0,0,255]].some(rgba=>rgba.every((v,i)=>pixels[at+i]===v))) throw new Error("Unexpected arc boundary color");
+                continue;
+            }
+        }
+        if (name === "policy-setter") expected = x>=16&&x<48&&y>=16&&y<48 ? x<32?[255,0,0,255]:[0,255,0,255] : [0,0,0,255];
         const at = ((63-y)*64+x)*4;
         if (expected.some((v,i) => pixels[at+i] !== v)) throw new Error(`Pixel mismatch ${name} at ${x},${y}: ${pixels.slice(at,at+4)}`);
     }
@@ -102,6 +132,10 @@ for (const level of ["log","info","warn","error"]) {
         original.apply(console,args);
         try {
             if (value.startsWith("CAPACITY_BEGIN ")) begin(value.split(" ")[1]);
+            if (value.startsWith("POLICY_ARC ")) {
+                active.arcDegrees = Number(value.split(" ")[1]);active.segments = Number(value.split(" ")[2]);
+                active.sourceIndices = 0;active.maxPositionError = 0;
+            }
             if (value.startsWith("CAPACITY_END ")) end(value.split(" ")[1]);
             if (value === "browser capacity regression: passed") evidence.completed = true;
         } catch (error) { evidence.errors.push(String(error)); }

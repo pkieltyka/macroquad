@@ -29,6 +29,7 @@ pub use style::{Skin, Style, StyleBuilder};
 
 pub use crate::hash;
 
+pub(crate) use render::submit_geometry_chunks;
 pub(crate) use render::ElementState;
 
 use std::{

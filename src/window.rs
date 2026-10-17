@@ -25,12 +25,15 @@ pub fn clear_background(color: Color) {
 /// index capacity counts indices, independently of their u16 values.
 ///
 /// # Panics
-/// Panics before changing buffers if geometry is queued or the index capacity
-/// exceeds backend buffer/draw limits. Call `set_default_camera()` to flush first,
-/// or call this at the beginning of a frame before drawing.
+/// Panics before flushing or changing buffers if the index capacity exceeds
+/// backend buffer/draw limits. Valid changes flush queued geometry using the
+/// current camera, render pass, viewport, model and clipping state.
 #[doc(hidden)]
 pub fn gl_set_drawcall_buffer_capacity(max_vertices: usize, max_indices: usize) {
     crate::with_context(|context| {
+        let (max_vertices, max_indices) =
+            crate::quad_gl::drawcall_capacity(max_vertices, max_indices);
+        context.perform_render_passes();
         context.gpu.with(|backend| {
             context
                 .gl

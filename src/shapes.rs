@@ -18,7 +18,7 @@ pub fn draw_triangle(v1: Vec2, v2: Vec2, v3: Vec2, color: Color) {
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(&vertices, &indices);
+        context.gl.geometry_builtin_triangles(&vertices, &indices);
     })
 }
 
@@ -44,7 +44,7 @@ pub fn draw_rectangle(x: f32, y: f32, w: f32, h: f32, color: Color) {
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(&vertices, &indices);
+        context.gl.geometry_builtin_triangles(&vertices, &indices);
     })
 }
 
@@ -72,7 +72,7 @@ pub fn draw_rectangle_lines(x: f32, y: f32, w: f32, h: f32, thickness: f32, colo
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(&vertices, &indices);
+        context.gl.geometry_builtin_triangles(&vertices, &indices);
     })
 }
 
@@ -132,7 +132,7 @@ pub fn draw_rectangle_lines_ex(
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(&vertices, &indices);
+        context.gl.geometry_builtin_triangles(&vertices, &indices);
     })
 }
 
@@ -186,7 +186,7 @@ pub fn draw_rectangle_ex(x: f32, y: f32, w: f32, h: f32, params: DrawRectanglePa
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(&vertices, &indices);
+        context.gl.geometry_builtin_triangles(&vertices, &indices);
     })
 }
 
@@ -233,7 +233,7 @@ pub fn draw_poly(x: f32, y: f32, sides: u8, radius: f32, rotation: f32, color: C
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(&vertices, &indices);
+        context.gl.geometry_builtin_triangles(&vertices, &indices);
     })
 }
 
@@ -298,7 +298,7 @@ pub fn draw_ellipse(x: f32, y: f32, w: f32, h: f32, rotation: f32, color: Color)
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(&vertices, &indices);
+        context.gl.geometry_builtin_triangles(&vertices, &indices);
     })
 }
 
@@ -361,7 +361,7 @@ pub fn draw_line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: Colo
 
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
-        context.gl.geometry(
+        context.gl.geometry_builtin_triangles(
             &[
                 Vertex::new(x1 + tx, y1 + ty, 0., 0., 0., color),
                 Vertex::new(x1 - tx, y1 - ty, 0., 0., 0., color),
@@ -375,6 +375,8 @@ pub fn draw_line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: Colo
 
 /// Draw arc from `rotation`(in degrees) to `arc + rotation` (`arc` in degrees),
 /// centered at `[x, y]` with a given number of `sides`, `radius`, line `thickness`, and `color`.
+/// Oversized shapes with the default material split into ordered triangles.
+/// Custom materials retain a single submission and must fit the configured capacities.
 pub fn draw_arc(
     x: f32,
     y: f32,
@@ -398,26 +400,87 @@ pub fn draw_arc(
         context.gl.texture(None);
         context.gl.draw_mode(DrawMode::Triangles);
 
-        let mut verticies = Vec::<Vertex>::with_capacity(sides * 2);
-        let mut indicies = Vec::<u16>::with_capacity(sides * 2);
-
-        for i in 0..sides {
-            let start_angle = i as f32 * span + rot;
-            let end_angle = start_angle + span;
-
-            indicies.extend([0, 1, 2, 2, 1, 3].map(|k| k + (verticies.len() as u16)));
-
-            for (angle, radius) in [
-                (start_angle, radius),
-                (start_angle, radius + thickness),
-                (end_angle, radius),
-                (end_angle, radius + thickness),
-            ] {
-                let point = Vec2::new(x, y) + radius * Vec2::from_angle(angle);
-                verticies.push(Vertex::new(point.x, point.y, 0., 0., 0., color));
-            }
+        let (max_v, max_i) = context.gl.drawcall_capacity();
+        let Some((vertex_count, index_count, segments_per_chunk)) =
+            arc_geometry_layout(sides, max_v, max_i)
+        else {
+            context.gl.reject_geometry(
+                usize::MAX,
+                usize::MAX,
+                "arc geometry count overflow (submitted counts saturated)",
+            );
+            return;
+        };
+        if !context
+            .gl
+            .builtin_geometry_supported(vertex_count, index_count)
+        {
+            return;
         }
-
-        context.gl.geometry(&verticies, &indicies);
+        // Generate local indices before they can wrap at the u16 source domain.
+        // Tiny capacities can split one segment further into its two triangles.
+        for start in (0..sides).step_by(segments_per_chunk) {
+            let end = (sides - start).min(segments_per_chunk) + start;
+            let mut vertices = Vec::<Vertex>::with_capacity((end - start) * 4);
+            let mut indices = Vec::<u16>::with_capacity((end - start) * 6);
+            for i in start..end {
+                let start_angle = i as f32 * span + rot;
+                let end_angle = start_angle + span;
+                let base = u16::try_from(vertices.len()).expect("bounded arc segment index");
+                indices.extend([0, 1, 2, 2, 1, 3].map(|index| index + base));
+                for (angle, radius) in [
+                    (start_angle, radius),
+                    (start_angle, radius + thickness),
+                    (end_angle, radius),
+                    (end_angle, radius + thickness),
+                ] {
+                    let point = Vec2::new(x, y) + radius * Vec2::from_angle(angle);
+                    vertices.push(Vertex::new(point.x, point.y, 0., 0., 0., color));
+                }
+            }
+            context.gl.geometry_builtin_triangles(&vertices, &indices);
+        }
     })
+}
+
+fn arc_geometry_layout(
+    segments: usize,
+    max_vertices: usize,
+    max_indices: usize,
+) -> Option<(usize, usize, usize)> {
+    Some((
+        segments.checked_mul(4)?,
+        segments.checked_mul(6)?,
+        segments.max(1).min(
+            (max_vertices.min(u16::MAX as usize + 1) / 4)
+                .min(max_indices / 6)
+                .max(1),
+        ),
+    ))
+}
+
+#[cfg(test)]
+mod arc_capacity_tests {
+    use super::arc_geometry_layout;
+
+    #[test]
+    fn segments_split_before_local_u16_wrap_and_respect_backend_restart_limit() {
+        assert_eq!(
+            arc_geometry_layout(17_000, 65_536, 100_000),
+            Some((68_000, 102_000, 16_384))
+        );
+        assert_eq!(
+            arc_geometry_layout(17_000, 65_535, 100_000),
+            Some((68_000, 102_000, 16_383))
+        );
+        assert_eq!(
+            arc_geometry_layout(834, 10_000, 5_000),
+            Some((3_336, 5_004, 833))
+        );
+        assert_eq!(arc_geometry_layout(834, 3, 3), Some((3_336, 5_004, 1)));
+        assert_eq!(
+            arc_geometry_layout(usize::MAX, usize::MAX, usize::MAX),
+            None
+        );
+    }
 }

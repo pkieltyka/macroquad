@@ -23,6 +23,7 @@ check-runtime:
 	$(PYTHON) tests/test_browser_audio_gate.py
 	$(PYTHON) tests/test_browser_process.py
 	$(PYTHON) tests/test_browser_input.py
+	$(PYTHON) tests/test_capacity_policy.py
 	$(PYTHON) tests/browser_scene/test_protocol.py
 	$(PYTHON) tests/test_prepare_release.py
 
@@ -54,6 +55,7 @@ check-shared:
 	$(CARGO) check --all-targets --features audio
 	$(XVFB_RUN) -a $(CARGO) test --tests --no-default-features
 	$(XVFB_RUN) -a $(CARGO) test --lib quad_gl::capacity_tests::capacity_regressions --no-default-features -- --exact --ignored
+	$(XVFB_RUN) -a $(CARGO) test --lib quad_gl::capacity_tests::public_capacity_regressions --no-default-features -- --exact --ignored
 	$(XVFB_RUN) -a $(CARGO) test --lib ui::ui_context::tests::ui_material_is_lazy_and_reused_after_empty_frames --no-default-features -- --exact --ignored
 	$(XVFB_RUN) -a env CARGO_TARGET_DIR=target/texture-cache-native $(CARGO) run --manifest-path tests/texture_cache/Cargo.toml
 	$(XVFB_RUN) -a $(CARGO) run --example image_transfer_regression --no-default-features

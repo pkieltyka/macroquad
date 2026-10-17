@@ -328,7 +328,7 @@ pub(crate) fn render_command(draw_lists: &mut Vec<DrawList>, command: DrawComman
     }
 }
 
-/// Split only built-in UI triangles; public mesh submissions retain their atomic contract.
+/// Split private built-in triangle lists; public mesh submissions remain atomic.
 pub(crate) fn submit_geometry_chunks(
     vertices: &[Vertex],
     indices: &[u16],

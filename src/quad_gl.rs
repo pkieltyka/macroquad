@@ -572,6 +572,7 @@ pub struct QuadGl {
     max_vertices: usize,
     max_indices: usize,
     vertex_limit: usize,
+    geometry_rejection_warned: bool,
 
     batch_vertex_buffer: Vec<Vertex>,
     batch_index_buffer: Vec<u16>,
@@ -588,7 +589,7 @@ fn drawcall_vertex_limit(gl_version: &str) -> usize {
 }
 
 // Index *count* has a separate GLsizei and byte-size limit from index values.
-fn drawcall_capacity(max_vertices: usize, max_indices: usize) -> (usize, usize) {
+pub(crate) fn drawcall_capacity(max_vertices: usize, max_indices: usize) -> (usize, usize) {
     let max_vertices = max_vertices.min(u16::MAX as usize + 1);
     assert!(
         max_indices <= i32::MAX as usize
@@ -637,6 +638,7 @@ impl QuadGl {
             max_vertices,
             max_indices,
             vertex_limit,
+            geometry_rejection_warned: false,
         }
     }
 
@@ -966,16 +968,25 @@ impl QuadGl {
         if indices.is_empty() {
             return;
         }
-        assert!(
-            vertices.len() <= self.max_vertices && indices.len() <= self.max_indices,
-            "geometry exceeds draw call capacity; submit smaller meshes or increase capacity"
-        );
-        assert!(
-            indices
-                .iter()
-                .all(|&index| usize::from(index) < vertices.len()),
-            "geometry index is outside its vertex slice"
-        );
+        if vertices.len() > self.max_vertices || indices.len() > self.max_indices {
+            self.reject_geometry(
+                vertices.len(),
+                indices.len(),
+                "geometry exceeds draw call capacity",
+            );
+            return;
+        }
+        if indices
+            .iter()
+            .any(|&index| usize::from(index) >= vertices.len())
+        {
+            self.reject_geometry(
+                vertices.len(),
+                indices.len(),
+                "geometry index is outside its vertex slice",
+            );
+            return;
+        }
 
         let pip = self.state.pipeline.unwrap_or(
             self.pipelines
@@ -1050,6 +1061,67 @@ impl QuadGl {
         dc.indices_count += indices.len();
 
         dc.texture = self.state.texture.clone();
+    }
+
+    pub(crate) fn reject_geometry(&mut self, vertices: usize, indices: usize, reason: &str) {
+        if cfg!(debug_assertions) || !self.geometry_rejection_warned {
+            let message = format!(
+                "{reason}; submitted {vertices} vertices/{indices} indices, effective capacity {} vertices/{} indices. Entire call rejected; submit smaller meshes or increase capacity and use valid local indices",
+                self.max_vertices, self.max_indices,
+            );
+            if cfg!(debug_assertions) {
+                panic!("{message}");
+            }
+            self.geometry_rejection_warned = true;
+            warn!("{}", message);
+        }
+    }
+
+    pub(crate) fn builtin_geometry_supported(&mut self, vertices: usize, indices: usize) -> bool {
+        if (vertices <= self.max_vertices && indices <= self.max_indices)
+            || (self.state.pipeline.is_none()
+                && self.state.draw_mode == DrawMode::Triangles
+                && self.max_vertices >= 3
+                && self.max_indices >= 3)
+        {
+            return true;
+        }
+        self.reject_geometry(vertices, indices, "geometry exceeds draw call capacity");
+        false
+    }
+
+    pub(crate) fn geometry_builtin_triangles(&mut self, vertices: &[Vertex], indices: &[u16]) {
+        if indices.is_empty()
+            || (vertices.len() <= self.max_vertices && indices.len() <= self.max_indices)
+        {
+            // All custom pipelines keep their original indices and draw boundary.
+            // They may interpret indices as points/lines, use gl_VertexID or sample
+            // _ScreenTexture; repartitioning those calls changes their semantics.
+            self.geometry(vertices, indices);
+            return;
+        }
+        if !self.builtin_geometry_supported(vertices.len(), indices.len()) {
+            return;
+        }
+        if indices.len() % 3 != 0
+            || indices
+                .iter()
+                .any(|&index| usize::from(index) >= vertices.len())
+        {
+            self.reject_geometry(
+                vertices.len(),
+                indices.len(),
+                "built-in geometry requires complete triangles with valid local indices",
+            );
+            return;
+        }
+        crate::ui::submit_geometry_chunks(
+            vertices,
+            indices,
+            self.max_vertices,
+            self.max_indices,
+            |vertices, indices| self.geometry(vertices, indices),
+        );
     }
 
     pub fn delete_pipeline(&mut self, ctx: &mut dyn RenderingBackend, pipeline: GlPipeline) {
@@ -1409,6 +1481,14 @@ mod capacity_tests {
         vec![Vertex::new(0., 0., 0., 0., 0., crate::color::WHITE); count]
     }
 
+    fn geometry_rejected(call: impl FnOnce(), message: &str) {
+        if cfg!(debug_assertions) {
+            crate::test_backend::assert_panics_with(call, message);
+        } else {
+            call();
+        }
+    }
+
     fn case(
         ctx: &mut dyn RenderingBackend,
         failures: &mut Vec<&'static str>,
@@ -1491,7 +1571,7 @@ mod capacity_tests {
                     |gl, _| {
                         gl.geometry(&vertices(3), &[0, 1, 2]);
                         for (v, i) in [(vertices(5), vec![0, 1, 4]), (vertices(3), vec![0; 7])] {
-                            crate::test_backend::assert_panics_with(
+                            geometry_rejected(
                                 || gl.geometry(&v, &i),
                                 "geometry exceeds draw call capacity",
                             );
@@ -1513,7 +1593,7 @@ mod capacity_tests {
                     (8, 12),
                     |gl, _| {
                         gl.geometry(&vertices(3), &[0, 1, 2]);
-                        crate::test_backend::assert_panics_with(
+                        geometry_rejected(
                             || gl.geometry(&vertices(3), &[0, 1, 3]),
                             "geometry index is outside its vertex slice",
                         );
@@ -1576,7 +1656,7 @@ mod capacity_tests {
                         gl.geometry(&[], &[]);
                         gl.geometry(&vertices(3), &[]);
                         assert_eq!(gl.draw_calls_count, 0);
-                        crate::test_backend::assert_panics_with(
+                        geometry_rejected(
                             || gl.geometry(&[], &[0]),
                             "geometry exceeds draw call capacity",
                         );
@@ -1636,5 +1716,182 @@ mod capacity_tests {
         );
         let failures = failures.lock().unwrap();
         assert!(failures.is_empty(), "failed capacity cases: {failures:?}");
+    }
+
+    #[test]
+    #[ignore = "requires a graphics display; run this exact test under Xvfb"]
+    fn public_capacity_regressions() {
+        crate::test::run(
+            concat!(module_path!(), "::public_capacity_regressions"),
+            || {
+                crate::Window::from_config(
+                    miniquad::conf::Conf {
+                        window_title: "Public capacity regressions".into(),
+                        window_width: 64,
+                        window_height: 64,
+                        ..Default::default()
+                    },
+                    async {
+                        use crate::{
+                            camera::{set_camera, Camera, Camera2D},
+                            color::WHITE,
+                            math::Rect,
+                            shapes::{draw_arc, draw_rectangle},
+                            texture::render_target,
+                            window::gl_set_drawcall_buffer_capacity,
+                        };
+                        let mut failed = Vec::new();
+                        for (name, arc, capacity) in [
+                            ("default large arc", 1177_f32, (10_000, 5_000)),
+                            (
+                                "arc beyond source u16 domain",
+                                24_001_f32,
+                                (100_000, 100_000),
+                            ),
+                        ] {
+                            gl_set_drawcall_buffer_capacity(capacity.0, capacity.1);
+                            if catch_unwind(AssertUnwindSafe(|| {
+                                draw_arc(0., 0., 255, 8., 0., 2., arc, WHITE);
+                                crate::with_context(|context| {
+                                    let gl = &context.gl;
+                                    let part = arc.to_radians();
+                                    let segments =
+                                        (255_f32 * part / std::f32::consts::TAU).ceil() as usize;
+                                    let span = part / segments as f32;
+                                    assert_eq!(gl.batch_index_buffer.len(), segments * 6);
+                                    assert!(gl.draw_calls_count >= 2);
+                                    let mut emitted = 0;
+                                    for dc in &gl.draw_calls[..gl.draw_calls_count] {
+                                        for &index in &gl.batch_index_buffer
+                                            [dc.indices_start..dc.indices_start + dc.indices_count]
+                                        {
+                                            assert!(usize::from(index) < dc.vertices_count);
+                                            let segment = emitted / 6;
+                                            let corner = [0, 1, 2, 2, 1, 3][emitted % 6];
+                                            let start_angle = segment as f32 * span;
+                                            let angle = if corner < 2 {
+                                                start_angle
+                                            } else {
+                                                start_angle + span
+                                            };
+                                            let radius = if corner % 2 == 0 { 8. } else { 10. };
+                                            let expected = glam::Vec2::from_angle(angle) * radius;
+                                            let actual = gl.batch_vertex_buffer
+                                                [dc.vertices_start + usize::from(index)]
+                                            .position;
+                                            assert!(
+                                                (actual.truncate() - expected).length() < 0.0001
+                                            );
+                                            emitted += 1;
+                                        }
+                                    }
+                                    assert_eq!(emitted, segments * 6);
+                                });
+                            }))
+                            .is_err()
+                            {
+                                failed.push(name);
+                            }
+                            crate::with_context(|context| context.gl.clear_draw_calls());
+                        }
+                        gl_set_drawcall_buffer_capacity(3, 3);
+                        if catch_unwind(AssertUnwindSafe(|| {
+                            crate::with_context(|context| context.gl.capture(true));
+                            draw_rectangle(0., 0., 16., 16., WHITE);
+                            crate::with_context(|context| {
+                                assert_eq!(context.gl.batch_index_buffer.len(), 6);
+                                assert_eq!(context.gl.draw_calls_count, 2);
+                                assert!(context.gl.draw_calls[..2].iter().all(|dc| dc.capture));
+                            });
+                            crate::with_context(|context| context.perform_render_passes());
+                            let captured = crate::telemetry::drawcalls();
+                            assert_eq!(captured.len(), 2);
+                            assert!(captured.iter().all(|draw| draw.indices_count == 3));
+                        }))
+                        .is_err()
+                        {
+                            failed.push("tiny default built-in with capture");
+                        }
+                        crate::with_context(|context| {
+                            context.gl.clear_draw_calls();
+                            context.gl.capture(false);
+                        });
+                        for primitive in [
+                            PrimitiveType::Triangles,
+                            PrimitiveType::Lines,
+                            PrimitiveType::Points,
+                        ] {
+                            gl_set_drawcall_buffer_capacity(4, 6);
+                            let material = crate::material::load_material(
+                                ShaderSource::Glsl {
+                                    vertex: "#version 100\nattribute vec3 position; uniform mat4 Projection; uniform mat4 Model; void main(){gl_Position=Projection*Model*vec4(position,1.);gl_PointSize=1.;}",
+                                    fragment: "#version 100\nprecision mediump float; uniform sampler2D _ScreenTexture; void main(){gl_FragColor=texture2D(_ScreenTexture,vec2(0.5));}",
+                                },
+                                crate::material::MaterialParams {pipeline_params: PipelineParams {primitive_type: primitive, ..Default::default()}, ..Default::default()},
+                            ).unwrap();
+                            crate::material::gl_use_material(&material);
+                            draw_rectangle(0., 0., 16., 16., WHITE);
+                            geometry_rejected(
+                                || draw_arc(0., 0., 255, 8., 0., 2., 1177., WHITE),
+                                "geometry exceeds draw call capacity",
+                            );
+                            crate::with_context(|context| {
+                                assert_eq!(context.gl.draw_calls_count, 1);
+                                assert_eq!(context.gl.batch_vertex_buffer.len(), 4);
+                                assert_eq!(context.gl.batch_index_buffer, [0, 1, 2, 0, 2, 3]);
+                                assert!(context.gl.state.pipeline.is_some());
+                                assert_eq!(
+                                    context.gl.geometry_rejection_warned,
+                                    !cfg!(debug_assertions)
+                                );
+                                context.gl.clear_draw_calls();
+                            });
+                            crate::material::gl_use_default_material();
+                        }
+                        gl_set_drawcall_buffer_capacity(8, 12);
+                        let target = render_target(64, 64);
+                        let mut camera = Camera2D::from_display_rect(Rect::new(10., 20., 32., 32.));
+                        camera.render_target = Some(target);
+                        camera.viewport = Some((8, 8, 32, 32));
+                        set_camera(&camera);
+                        let model = glam::Mat4::from_translation(glam::vec3(2., 3., 0.));
+                        crate::with_context(|context| {
+                            context.gl.push_model_matrix(model);
+                            context.gl.scissor(Some((4, 5, 40, 41)));
+                        });
+                        draw_rectangle(10., 20., 16., 16., WHITE);
+                        crate::test_backend::assert_panics_with(
+                            || gl_set_drawcall_buffer_capacity(4, usize::MAX),
+                            "draw call index capacity exceeds backend buffer or draw limits",
+                        );
+                        crate::with_context(|context| {
+                            assert_eq!(context.gl.draw_calls_count, 1);
+                            assert_eq!(context.gl.drawcall_capacity(), (8, 12));
+                        });
+                        if catch_unwind(AssertUnwindSafe(|| {
+                            gl_set_drawcall_buffer_capacity(4, 6);
+                            crate::with_context(|context| {
+                                assert_eq!(context.gl.draw_calls_count, 0);
+                                assert_eq!(context.gl.drawcall_capacity(), (4, 6));
+                                assert_eq!(context.camera_matrix, Some(camera.matrix()));
+                                assert_eq!(context.gl.state.viewport, camera.viewport);
+                                assert_eq!(context.gl.state.render_pass, camera.render_pass());
+                                assert_eq!(context.gl.state.model(), model);
+                                assert_eq!(context.gl.state.clip, Some((4, 5, 40, 41)));
+                            });
+                        }))
+                        .is_err()
+                        {
+                            failed.push("queued public setter preserves state");
+                        }
+                        crate::with_context(|context| context.gl.clear_draw_calls());
+                        assert!(
+                            failed.is_empty(),
+                            "failed public capacity cases: {failed:?}"
+                        );
+                    },
+                );
+            },
+        );
     }
 }

@@ -447,3 +447,17 @@ test("missing synthetic touches lists are not authoritative and duplicate termin
   assert.deepEqual(calls, [["touch",10,1,30,50],["touch",10,2,30,50],
     ["touch",13,2,30,50],["touch",13,1,30,50],["touch",13,2,30,50]]);
 });
+
+test("spec-default empty touches lists cannot cancel the event's own contacts", () => {
+  // new TouchEvent(type, {changedTouches}) defaults touches to [], not null.
+  // Treating that list as authoritative turned every synthetic drag into a click.
+  const {canvas,calls} = inputRuntime();
+  canvas.emit("touchstart",touchEvent([[5]],[]));
+  canvas.emit("touchmove",touchEvent([[5,75,85]],[]));
+  canvas.emit("touchend",touchEvent([[5]],[]));
+  canvas.emit("touchstart",touchEvent([[1]],[1]));
+  canvas.emit("touchstart",touchEvent([[2]],[]));
+  canvas.emit("touchend",touchEvent([[2]],[1]));
+  assert.deepEqual(calls, [["touch",10,5,30,50],["touch",11,5,35,55],["touch",12,5,30,50],
+    ["touch",10,1,30,50],["touch",10,2,30,50],["touch",12,2,30,50]]);
+});

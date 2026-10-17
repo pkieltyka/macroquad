@@ -170,10 +170,15 @@ function setup_owned_touch_input() {
                 }
                 wasm_exports.touch(phase, touch.identifier, position.x, position.y);
             }
-            // Real TouchEvents always supply touches; tolerate older synthetic
-            // callers without treating a missing list as authoritative emptiness.
-            if (event.touches == null) return;
+            // Real TouchEvents always supply a consistent touches list. Synthetic
+            // events may omit it, or get TouchEventInit's empty default; only a
+            // list that agrees with this event's own changes is authoritative.
+            if (event.touches == null || ownedTouches.size === 0) return;
             const present = new Set(Array.from(event.touches, touch => touch.identifier));
+            const active = name === "touchstart" || name === "touchmove";
+            for (const touch of event.changedTouches) {
+                if (present.has(touch.identifier) !== active) return;
+            }
             for (const [identifier, position] of ownedTouches) {
                 if (present.has(identifier)) continue;
                 ownedTouches.delete(identifier);

@@ -35,7 +35,7 @@
 
          function acquireVertexArrayObjectExtension(ctx) {
              // Extension available in WebGL 1 from Firefox 25 and WebKit 536.28/desktop Safari 6.0.3 onwards. Core feature in WebGL 2.
-@@ -88,11 +111,79 @@
+@@ -88,11 +111,84 @@
              alert("Cant initialize WEBGL_depth_texture extension");
          }
      } else {
@@ -101,10 +101,15 @@
 +                }
 +                wasm_exports.touch(phase, touch.identifier, position.x, position.y);
 +            }
-+            // Real TouchEvents always supply touches; tolerate older synthetic
-+            // callers without treating a missing list as authoritative emptiness.
-+            if (event.touches == null) return;
++            // Real TouchEvents always supply a consistent touches list. Synthetic
++            // events may omit it, or get TouchEventInit's empty default; only a
++            // list that agrees with this event's own changes is authoritative.
++            if (event.touches == null || ownedTouches.size === 0) return;
 +            const present = new Set(Array.from(event.touches, touch => touch.identifier));
++            const active = name === "touchstart" || name === "touchmove";
++            for (const touch of event.changedTouches) {
++                if (present.has(touch.identifier) !== active) return;
++            }
 +            for (const [identifier, position] of ownedTouches) {
 +                if (present.has(identifier)) continue;
 +                ownedTouches.delete(identifier);
@@ -118,7 +123,7 @@
  }
 
  canvas.focus();
-@@ -1176,41 +1267,14 @@
+@@ -1176,41 +1272,14 @@
              resize(canvas);
          },
          run_animation_loop: function (blocking) {
@@ -162,7 +167,7 @@
              canvas.onkeydown = function (event) {
                  var sapp_key_code = into_sapp_keycode(event.code);
                  switch (sapp_key_code) {
-@@ -1272,39 +1336,6 @@
+@@ -1272,39 +1341,6 @@
                  }
              };
 
@@ -202,7 +207,7 @@
              window.onresize = function () {
                  resize(canvas, wasm_exports.resize);
              };
-@@ -1369,6 +1400,10 @@
+@@ -1369,6 +1405,10 @@
                  // However, the document becomes invisible
                  let hasFocus = document.hasFocus() && document.visibilityState == "visible";
                  if (lastFocus != hasFocus) {
@@ -213,7 +218,7 @@
                      wasm_exports.focus(hasFocus);
                      lastFocus = hasFocus;
                  }
-@@ -1458,7 +1493,8 @@
+@@ -1458,7 +1498,8 @@
              }
              animation_frame_timeout = window.requestAnimationFrame(animation);
          },

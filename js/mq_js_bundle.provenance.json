@@ -8,7 +8,7 @@
     "bundlePath": "vendor/browser-runtime/macroquad-0.4.16.js",
     "bundleSha256": "4bf663a44a06c113bed92e0596c58139cd9db7f0d67ef2cc49ca06016e0b5ea0"
   },
-  "bundleSha256": "ceb016d96bec8b2da6172f13902c71bc2ca8065fa250964a123706a5f4cb15fc",
+  "bundleSha256": "3a262ff4f74cc051b49d4b487ea136154fbd5c8e71a8053ff33785bc7de74d3e",
   "rustPackages": {
     "macroquad": {
       "version": "0.5.1",
@@ -73,7 +73,7 @@
       },
       "requiredByCurrentRust": true,
       "sourcePath": "vendor/miniquad/js/gl.js",
-      "sourceSha256": "2904a1763d6e64cc4bb9be4f020755f81bdc5bd22bceeec70768ac0bd1b9d7ad",
+      "sourceSha256": "5b9bed2c9c13d09d3af3180cf406c3d76d64823fc780ccbdcff9d8224e73afaf",
       "initializer": "init_webgl(version, antialias): antialias is 0 or 1; only the antialias context attribute is specified"
     }
   },

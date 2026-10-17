@@ -1,8 +1,8 @@
 # Browser runtime provenance
 
 The prepared **0.5.1** source pairs Rust with `js/mq_js_bundle.js`, SHA-256
-`ceb016d96bec8b2da6172f13902c71bc2ca8065fa250964a123706a5f4cb15fc`
-(43,182 bytes). It includes owned browser mouse termination, missing-touch
+`3a262ff4f74cc051b49d4b487ea136154fbd5c8e71a8053ff33785bc7de74d3e`
+(43,504 bytes). It includes owned browser mouse termination, missing-touch
 reconciliation and the checked v2 antialias initializer. This candidate has not
 been published; the immutable 0.5.0 release/runtime and historical game acceptance
 remain separate. See [prepared migration notes](releases/zubspace-v0.5.1.md).
@@ -72,8 +72,10 @@ when refreshed2026-10-17). Only canvas-originated buttons receive a window relea
 unrelated/duplicate DOM releases are ignored, including after blur cleanup.
 Keyboard/clipboard JavaScript retains the base implementation. Owned touch IDs
 and their last positions are mirrored only after canvas Started events. A later
-authoritative touches list cancels missing owned IDs after explicit changes,
-without adopting unrelated contacts or detecting missing events immediately.
+touches list cancels missing owned IDs after explicit changes, without adopting
+unrelated contacts or detecting missing events immediately. It is trusted only when
+it agrees with its event's own changes, so synthetic events built without a list
+(an empty list by default) cannot cancel their own contact.
 Blur discards that mirror before Rust focus cleanup. Macroquad retains terminal
 touch cancellation, legacy Ended behavior and physical/simulated source aggregation;
 [the input contract](../plans/0.5.1-browser-efficiency.md#input-batch-complete-owned-browser-input-termination)

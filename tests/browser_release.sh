@@ -67,6 +67,7 @@ python3 tests/browser_capacity/browser.py --output "$output/capacity"
 python3 tests/texture_cache/browser.py --wasm-dir "$output/webgl" --runtime js/mq_js_bundle.js --selection
 # The browser checks actual imports, including its genuine glGetError adapter.
 if [[ "$mode" == full ]]; then
+    python3 tests/browser_input/browser.py --output "$output/input"
     python3 tests/browser_scene/browser.py --output "$output/scene"
 fi
 

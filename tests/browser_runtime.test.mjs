@@ -42,7 +42,7 @@ function listeners() {
   return {
     addEventListener(name, fn) { events.set(name, [...(events.get(name) ?? []), fn]); },
     removeEventListener(name, fn) { events.set(name, (events.get(name) ?? []).filter((entry) => entry !== fn)); },
-    emit(name) { for (const fn of events.get(name) ?? []) fn(); },
+    emit(name, event) { for (const fn of events.get(name) ?? []) fn(event); },
   };
 }
 
@@ -314,4 +314,52 @@ test("the previous paired runtime is rejected before its loader can stub the sel
   const runtime = createRuntime(sources);
   runtime.importObject.env.webgl_selection_version = () => 2;
   assert.throws(() => validateWasmContract(wasm(), runtime, sources.metadata.abi), /selection extension version mismatch/);
+});
+
+
+function inputRuntime() {
+  let focused = true;
+  const calls = [];
+  const canvas = { focus() {}, getBoundingClientRect: () => ({left:40, top:30}), ...listeners() };
+  const document = {querySelector: () => canvas, hasFocus: () => focused, visibilityState:"visible", ...listeners()};
+  const window = {requestAnimationFrame() {}, ...listeners()};
+  const runtime = createRuntime(sources, {document, window});
+  runtime.wasm_exports = {
+    mouse_down: (...args) => calls.push(["down", ...args]),
+    mouse_up: (...args) => calls.push(["up", ...args]),
+    mouse_move: (...args) => calls.push(["move", ...args]),
+    raw_mouse_move: (...args) => calls.push(["raw", ...args]),
+    focus: value => calls.push(["focus", value]),
+  };
+  runtime.importObject.env.run_animation_loop(true);
+  return {runtime,canvas,document,window,calls,blur() {focused=false; window.emit("blur");}};
+}
+const mouseEvent = (button=0, clientX=70, clientY=80) => ({button,clientX,clientY,movementX:0,movementY:0});
+
+test("owned window mouseup terminates an outside press once and ignores unrelated releases", () => {
+  const {canvas,window,calls} = inputRuntime();
+  window.emit("mouseup",mouseEvent());
+  canvas.onmousedown(mouseEvent());
+  window.emit("mouseup",mouseEvent(0,300,200));
+  window.emit("mouseup",mouseEvent());
+  assert.deepEqual(calls, [["down",30,50,0],["up",260,170,0]]);
+});
+
+test("blur releases owned buttons in press order before one focus transition", () => {
+  const {canvas,window,calls,blur} = inputRuntime();
+  canvas.onmousedown(mouseEvent(2));
+  canvas.onmousedown(mouseEvent(0));
+  blur(); blur();
+  window.emit("mouseup",mouseEvent(0));
+  window.emit("mouseup",mouseEvent(2));
+  assert.deepEqual(calls, [["down",30,50,1],["down",30,50,0],["up",30,50,1],["up",30,50,0],["focus",false]]);
+});
+
+test("owned release keeps existing relative coordinates and raw movement under pointer lock", () => {
+  const {canvas,document,window,calls} = inputRuntime();
+  document.pointerLockElement = canvas;
+  canvas.onmousedown(mouseEvent());
+  canvas.onmousemove({...mouseEvent(),movementX:7,movementY:-3});
+  window.emit("mouseup",mouseEvent(0,80,100));
+  assert.deepEqual(calls, [["down",30,50,0],["move",30,50],["raw",7,-3],["up",40,70,0]]);
 });

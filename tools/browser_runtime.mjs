@@ -19,6 +19,15 @@ export function regenerateBundle(base, glSource = fs.readFileSync(new URL("../ve
   const oldEnd = base.indexOf("canvas.focus()", oldStart);
   assert.ok(oldStart >= 0 && oldEnd > oldStart, "upstream WebGL initializer is missing");
   replace("WebGL context selection", base.slice(oldStart, oldEnd), glSource.slice(start, end));
+  // Copy owned mouse handling from the same vendored source as the initializer.
+  // Keep the base's keyboard/touch/clipboard loop unchanged.
+  const mouseStart = base.indexOf("canvas.onmousemove=function", base.indexOf("run_animation_loop:"));
+  const mouseEnd = base.indexOf("canvas.onkeydown=", mouseStart);
+  assert.ok(mouseStart >= 0 && mouseEnd > mouseStart, "upstream mouse input anchors are missing");
+  replace("owned browser mouse listeners", base.slice(mouseStart, mouseEnd),
+    'var releaseOwnedMouseButtons=setup_owned_mouse_input();canvas.addEventListener("wheel",function(e){e.preventDefault();wasm_exports.mouse_wheel(-e.deltaX,-e.deltaY)});');
+  replace("owned mouse blur termination", 'n!=e&&(wasm_exports.focus(e),n=e)',
+    'n!=e&&(!e&&releaseOwnedMouseButtons(),wasm_exports.focus(e),n=e)');
   replace("WebGL selection extension", "init_webgl}};", "init_webgl,webgl_selection_version:function(){return 1;}}};");
   replace("fallback canvas", 'document.querySelector("#glcanvas");',
     'document.querySelector("#glcanvas")||(()=>{const e=document.createElement("canvas");return e.id="glcanvas",e.tabIndex=1,(document.body||document.documentElement).appendChild(e),e})();');

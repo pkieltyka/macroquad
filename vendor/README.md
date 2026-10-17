@@ -14,6 +14,10 @@ including additive Auto configuration and the paired JavaScript initializer.
 - Adapted patch: [Miniquad #691](https://github.com/not-fl3/miniquad/pull/691),
   source commit `fbc59729b24dd6c3c4052a729431fa54ffe42b0d`,
   ricande `<ricande@gmail.com>`. Open/unmerged when reviewed 2026-10-16.
+- Adapted browser input idea: [Miniquad #602](https://github.com/not-fl3/miniquad/pull/602),
+  TheRedDeveloper, head`876e2fb92fa5339071dbaf5d3ef40df4f8901bb7`.
+  Refreshed2026-10-17: open/unmerged, no issue comments or reviews. The window
+  listener is ownership-filtered locally rather than copied unconditionally.
 
 `miniquad.patch` is the complete delta from that artifact:
 
@@ -42,7 +46,12 @@ v1 prevents old JavaScript silently interpreting Auto as a strict WebGL2 request
 Actual context version/capability detection remains authoritative. The maintained
 aggregate copies this initializer from the vendored JS.
 
-These are local fixes, not imported community patches. There are no other
+The maintained JS also installs owned canvas-button tracking with window-capture
+release and ordered blur cleanup. The generated aggregate copies that helper
+alongside the initializer and records the full input hash. Existing keyboard,
+touch DOM forwarding and clipboard handlers retain their previous implementation.
+
+The remaining changes are local fixes rather than imported community patches. There are no other
 changes inside the vendored crate beyond the complete patch above.
 [Backend boundary notes](../docs/backend-boundaries.md) describe the contracts,
 primary Xlib sources, intentional ownership migration and validation limits.

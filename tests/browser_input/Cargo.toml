@@ -1,0 +1,17 @@
+[package]
+name = "browser-input-regression"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+macroquad = { path = "../..", default-features = false }
+miniquad = { version = "=0.4.11", path = "../../vendor/miniquad" }
+
+[features]
+webgl2 = []
+touch-wake = []
+
+[[bin]]
+name = "browser-input-regression"
+path = "input.rs"

@@ -28,7 +28,7 @@ check-vendor:
 	$(PYTHON) tools/vendor_miniquad.py
 
 check-format:
-	for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml tests/browser_scene/Cargo.toml tests/browser_capacity/Cargo.toml; do \
+	for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml tests/browser_scene/Cargo.toml tests/browser_capacity/Cargo.toml tests/browser_input/Cargo.toml; do \
 		$(CARGO) fmt --manifest-path "$$manifest" -- --check; \
 	done
 	$(RUSTFMT) --edition 2018 --check vendor/miniquad/src/conf.rs vendor/miniquad/src/native/wasm.rs vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs vendor/miniquad/src/native/linux_x11/clipboard.rs vendor/miniquad/src/native/linux_x11/drag_n_drop.rs

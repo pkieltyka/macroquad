@@ -35,6 +35,46 @@ pub struct Touch {
     pub position: Vec2,
 }
 
+// Keep the legacy all-starts/all-ends mouse simulation, without selecting a
+// primary finger. Cancellation ends a held simulation only after its last owner.
+#[derive(Default)]
+pub(crate) struct TouchMouseSimulation {
+    contacts: HashSet<u64>,
+    held: bool,
+}
+impl TouchMouseSimulation {
+    pub(crate) fn held(&self) -> bool {
+        self.held
+    }
+    pub(crate) fn clear(&mut self) -> bool {
+        self.contacts.clear();
+        std::mem::take(&mut self.held)
+    }
+    pub(crate) fn event(
+        &mut self,
+        phase: miniquad::TouchPhase,
+        id: u64,
+    ) -> Option<miniquad::TouchPhase> {
+        use miniquad::TouchPhase::*;
+        match phase {
+            Started => {
+                self.contacts.insert(id);
+                self.held = true;
+                Some(Started)
+            }
+            Ended if self.contacts.remove(&id) => {
+                self.held = false;
+                Some(Ended)
+            }
+            Cancelled if self.contacts.remove(&id) && self.contacts.is_empty() && self.held => {
+                self.held = false;
+                Some(Ended)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Constrain mouse to window
 pub fn set_cursor_grab(grab: bool) {
     crate::with_context(|context| {
@@ -84,9 +124,18 @@ pub fn is_simulating_mouse_with_touch() -> bool {
 }
 
 /// This is set to true by default, meaning touches will raise mouse events in addition to raising touch events.
-/// If set to false, touches won't affect mouse events.
+/// If set to false, touches won't affect mouse events. Disabling simulation
+/// terminates a simulated hold, preserving a simultaneously held physical Left.
+/// Touch starts/ends retain their legacy mouse mapping; cancellation releases
+/// only after the last simulated contact ends. No primary finger is selected.
 pub fn simulate_mouse_with_touch(option: bool) {
-    crate::with_context(|context| context.simulate_mouse_with_touch = option);
+    crate::with_context(|context| {
+        if !option && context.touch_mouse.clear() && !context.physical_left_mouse_down {
+            let position = context.mouse_position;
+            context.record_mouse_up(MouseButton::Left, position.x, position.y);
+        }
+        context.simulate_mouse_with_touch = option;
+    });
 }
 
 /// Return touches with positions in pixels.
@@ -226,5 +275,54 @@ pub mod utils {
         for event in events {
             event.repeat(t);
         }
+    }
+}
+
+#[cfg(test)]
+mod touch_mouse_tests {
+    use super::TouchMouseSimulation;
+    use miniquad::TouchPhase::*;
+
+    #[test]
+    fn cancellation_terminates_once_without_choosing_a_primary_contact() {
+        for order in [[7, 8], [8, 7]] {
+            let mut simulation = TouchMouseSimulation::default();
+            assert_eq!(simulation.event(Started, 7), Some(Started));
+            assert_eq!(simulation.event(Started, 8), Some(Started));
+            assert_eq!(simulation.event(Cancelled, 99), None);
+            assert_eq!(simulation.event(Cancelled, order[0]), None);
+            assert!(simulation.held());
+            assert_eq!(simulation.event(Cancelled, order[1]), Some(Ended));
+            assert!(!simulation.held());
+            assert_eq!(simulation.event(Cancelled, order[1]), None);
+            assert_eq!(simulation.event(Ended, order[1]), None);
+        }
+    }
+
+    #[test]
+    fn genuine_ends_retain_legacy_release_with_survivors() {
+        let mut simulation = TouchMouseSimulation::default();
+        simulation.event(Started, 1);
+        simulation.event(Started, 2);
+        assert_eq!(simulation.event(Ended, 1), Some(Ended));
+        assert!(!simulation.held());
+        assert_eq!(simulation.event(Cancelled, 2), None);
+        assert_eq!(simulation.event(Ended, 1), None);
+        simulation.event(Started, 3);
+        simulation.event(Started, 4);
+        assert_eq!(simulation.event(Ended, 3), Some(Ended));
+        assert_eq!(simulation.event(Ended, 4), Some(Ended));
+    }
+
+    #[test]
+    fn clearing_ownership_does_not_reanimate_old_contacts() {
+        let mut simulation = TouchMouseSimulation::default();
+        simulation.event(Started, 1);
+        assert!(simulation.clear());
+        assert!(!simulation.clear());
+        simulation.event(Started, 2);
+        assert_eq!(simulation.event(Cancelled, 1), None);
+        assert!(simulation.held());
+        assert_eq!(simulation.event(Cancelled, 2), Some(Ended));
     }
 }

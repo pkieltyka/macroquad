@@ -54,7 +54,7 @@ def validate_audio_unlock(result, gesture_sent):
         raise AssertionError("Audio context did not resume to running after the trusted gesture")
 
 
-def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30, force_dpr1=False):
+def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30, force_dpr1=False, exercise=None):
     driver_env = os.environ.copy()
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -100,6 +100,8 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
             if force_dpr1:
                 request(port, "POST", f"/session/{session}/window/rect", {"width": 800, "height": 650})
             request(port, "POST", f"/session/{session}/url", {"url": url})
+            if exercise:
+                exercise(port, session)
             deadline = time.monotonic() + timeout
             unlocked = False
             while True:

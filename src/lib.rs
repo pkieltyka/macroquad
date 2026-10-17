@@ -191,11 +191,47 @@ pub(crate) mod thread_assert {
     }
 }
 
+impl Context {
+    fn record_mouse_down(&mut self, btn: MouseButton, x: f32, y: f32) {
+        self.mouse_down.insert(btn);
+        self.mouse_pressed.insert(btn);
+
+        self.input_events
+            .iter_mut()
+            .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonDown { x, y, btn }));
+
+        if !self.cursor_grabbed {
+            self.mouse_position = Vec2::new(x, y);
+        }
+
+        if self.update_on.mouse_down {
+            ::miniquad::window::schedule_update();
+        }
+    }
+    fn record_mouse_up(&mut self, btn: MouseButton, x: f32, y: f32) {
+        self.mouse_down.remove(&btn);
+        self.mouse_released.insert(btn);
+
+        self.input_events
+            .iter_mut()
+            .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn }));
+
+        if !self.cursor_grabbed {
+            self.mouse_position = Vec2::new(x, y);
+        }
+        if self.update_on.mouse_up {
+            ::miniquad::window::schedule_update();
+        }
+    }
+}
+
 struct Context {
     screen_width: f32,
     screen_height: f32,
 
     simulate_mouse_with_touch: bool,
+    touch_mouse: input::TouchMouseSimulation,
+    physical_left_mouse_down: bool,
 
     keys_down: HashSet<KeyCode>,
     keys_pressed: HashSet<KeyCode>,
@@ -340,6 +376,8 @@ impl Context {
             screen_height,
 
             simulate_mouse_with_touch: true,
+            touch_mouse: input::TouchMouseSimulation::default(),
+            physical_left_mouse_down: false,
 
             keys_down: HashSet::new(),
             keys_pressed: HashSet::new(),
@@ -769,22 +807,11 @@ impl EventHandler for Stage {
             return;
         }
         crate::with_context(|context| {
-            context.mouse_down.insert(btn);
-            context.mouse_pressed.insert(btn);
-
-            context
-                .input_events
-                .iter_mut()
-                .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonDown { x, y, btn }));
-
-            if !context.cursor_grabbed {
-                context.mouse_position = Vec2::new(x, y);
+            if btn == MouseButton::Left {
+                context.physical_left_mouse_down = true;
             }
-
-            if context.update_on.mouse_down {
-                ::miniquad::window::schedule_update();
-            }
-        })
+            context.record_mouse_down(btn, x, y);
+        });
     }
 
     fn mouse_button_up_event(&mut self, btn: MouseButton, x: f32, y: f32) {
@@ -792,22 +819,17 @@ impl EventHandler for Stage {
             return;
         }
         crate::with_context(|context| {
-            //     println!("btn = {}", btn as u32);
-            context.mouse_down.remove(&btn);
-            context.mouse_released.insert(btn);
-
-            context
-                .input_events
-                .iter_mut()
-                .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn }));
-
-            if !context.cursor_grabbed {
-                context.mouse_position = Vec2::new(x, y);
+            if btn == MouseButton::Left {
+                context.physical_left_mouse_down = false;
+                if context.touch_mouse.held() {
+                    if context.update_on.mouse_up {
+                        ::miniquad::window::schedule_update();
+                    }
+                    return;
+                }
             }
-            if context.update_on.mouse_up {
-                ::miniquad::window::schedule_update();
-            }
-        })
+            context.record_mouse_up(btn, x, y);
+        });
     }
 
     fn mouse_leave_event(&mut self) {
@@ -815,6 +837,7 @@ impl EventHandler for Stage {
             return;
         }
         crate::with_context(|context| {
+            context.physical_left_mouse_down = false;
             context.mouse_released.extend(context.mouse_down.drain());
         })
     }
@@ -833,6 +856,9 @@ impl EventHandler for Stage {
                 .iter_mut()
                 .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn }));
             if btn != MouseButton::Unknown {
+                if btn == MouseButton::Left {
+                    context.physical_left_mouse_down = true;
+                }
                 context.mouse_down.insert(btn);
                 context.mouse_pressed.insert(btn);
             }
@@ -847,7 +873,7 @@ impl EventHandler for Stage {
         if self.closed {
             return;
         }
-        let (simulate, update_touch) = with_context(|context| {
+        with_context(|context| {
             context.touches.insert(
                 id,
                 input::Touch {
@@ -856,25 +882,30 @@ impl EventHandler for Stage {
                     position: Vec2::new(x, y),
                 },
             );
-            (context.simulate_mouse_with_touch, context.update_on.touch)
-        });
-        // Replayed mouse handlers acquire their own scope; no Context reference
-        // or component borrow survives this callback dispatch.
-        if simulate {
-            match phase {
-                TouchPhase::Started => self.mouse_button_down_event(MouseButton::Left, x, y),
-                TouchPhase::Ended => self.mouse_button_up_event(MouseButton::Left, x, y),
-                TouchPhase::Moved => self.mouse_motion_event(x, y),
-                _ => (),
+            if context.simulate_mouse_with_touch {
+                match context.touch_mouse.event(phase, id) {
+                    Some(TouchPhase::Started) => context.record_mouse_down(MouseButton::Left, x, y),
+                    Some(TouchPhase::Ended) => {
+                        if !context.physical_left_mouse_down {
+                            context.record_mouse_up(MouseButton::Left, x, y);
+                        } else if context.update_on.mouse_up {
+                            ::miniquad::window::schedule_update();
+                        }
+                    }
+                    _ => (),
+                }
             }
-        } else if update_touch {
-            ::miniquad::window::schedule_update();
+        });
+        if phase == TouchPhase::Moved && with_context(|context| context.simulate_mouse_with_touch) {
+            self.mouse_motion_event(x, y);
         }
         with_context(|context| {
             for events in &mut context.input_events {
                 events.push(MiniquadInputEvent::Touch { phase, id, x, y });
             }
-            if context.update_on.mouse_down {
+            // Preserve the legacy mouse-down wake and honor the independent
+            // touch trigger even when mouse simulation also handles the event.
+            if context.update_on.touch || context.update_on.mouse_down {
                 ::miniquad::window::schedule_update();
             }
         });
@@ -1072,6 +1103,13 @@ impl EventHandler for Stage {
         crate::with_context(|context| {
             #[cfg(target_os = "android")]
             audio::pause();
+
+            context.touch_mouse.clear();
+            context.physical_left_mouse_down = false;
+            if context.mouse_down.contains(&MouseButton::Left) {
+                let position = context.mouse_position;
+                context.record_mouse_up(MouseButton::Left, position.x, position.y);
+            }
 
             // Clear held down keys and button and announce them as released
             context.mouse_released.extend(context.mouse_down.drain());

@@ -1,14 +1,20 @@
 # Browser runtime provenance
 
-Fork release 0.5.0 pairs its Rust source with `js/mq_js_bundle.js`, SHA-256
+The current development source pairs Rust with `js/mq_js_bundle.js`, SHA-256
+`55aaa3fc74b1b46294077c387e9d612e94a81b8cb9b9b0059f34c33ad78fe05d`
+(41,648 bytes). It adds owned browser mouse termination to the planned0.5.1
+capacity/input work. Package/release-template version fields remain0.5.0 until
+the final release-preparation decision; this runtime is not the immutable0.5.0
+release asset and no new tag/publication is implied.
+
+The prior0.5.0 runtime SHA256 was
 `501cbd90f2494eda6d05407e8328f7a47fa08c5c8c802a9c056d036bbd2c4dac`
-(40,664 bytes). It adds automatic WebGL selection to the earlier reviewed
-runtime. Historical acceptance used
-`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271` and runtime SHA-256
+(40,664 bytes), with automatic WebGL selection. Earlier historical game acceptance
+used source`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271` and runtime SHA256
 `c4cc9799355e046d0fef61e1078e5524b08e0516fb914246b9808c0d80d367e9`
-(38,256 bytes), retained only as a negative-test input at
-`tests/fixtures/mq_js_bundle-pre-auto.js`. Those old game results do not validate
-this new Auto runtime or a new 0.5.0 game pin.
+(38,256 bytes), retained as a negative input at
+`tests/fixtures/mq_js_bundle-pre-auto.js`. Those game results do not validate the
+new runtime or establish a new game pin.
 
 The unchanged published Macroquad **0.4.16** aggregate is committed at
 `vendor/browser-runtime/macroquad-0.4.16.js`. Its crate VCS revision is
@@ -28,9 +34,10 @@ Each input anchor must occur exactly once. They add a focusable fallback canvas,
 bounded download copying, import lookup by module, an optional WASM response
 callback, quiet audio unlock, a scoped quad-net registrar (fixing upstream's
 strict-mode startup exception), a terminal newline and the audio state extension.
-The base retains upstream's combined document focus/visibility handling.
+The base retains upstream's combined document focus/visibility detection, with
+owned mouse releases inserted before a deduplicated focus-loss notification.
 
-The context initializer is copied deterministically from the patched vendored
+The context initializer and owned-mouse helper are copied deterministically from the patched vendored
 `vendor/miniquad/js/gl.js`; its full input hash is recorded in provenance and
 the runtime asset includes that source and Miniquad's original license files.
 Auto requests WebGL2 first and falls back to WebGL1 only when creation returns
@@ -41,6 +48,17 @@ initializes legacy extensions; Rust capabilities follow the actual context.
 Rust before startup. Miniquad ABI2 and existing plugin/audio ABI1 remain intact;
 the strict import gate rejects the old bundle before fallback stubs can hide
 the missing extension. This does not claim faster frames or context restoration.
+
+Owned mouse handling adapts [Miniquad #602](https://github.com/not-fl3/miniquad/pull/602)
+(TheRedDeveloper, head`876e2fb92fa5339071dbaf5d3ef40df4f8901bb7`, open/unmerged
+when refreshed2026-10-17). Only canvas-originated buttons receive a window release;
+unrelated/duplicate DOM releases are ignored, including after blur cleanup.
+Keyboard/touch/clipboard JavaScript remains the base implementation. Macroquad
+handles terminal touch cancellation and physical/simulated source aggregation;
+[the input contract](../plans/0.5.1-browser-efficiency.md#input-batch-complete-owned-browser-input-termination)
+documents legacy multitouch Ended behavior, toggles and blocking-loop wake.
+No new import, public API or ABI extension is introduced. The existing release
+source asset list already includes the maintained JS source and generator.
 
 Audio plugin ABI remains 1. `env.audio_source_state` extension v1 reports pending
 0, loaded 1, failed -1 and unknown/deleted -2. It copies bytes before decode,

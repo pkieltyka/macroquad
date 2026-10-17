@@ -1,0 +1,32 @@
+<!doctype html><meta charset="utf-8">
+<style>html,body {margin:0} #glcanvas {position:absolute;left:40px;top:40px;width:160px;height:120px} #other {position:absolute;left:300px;top:200px}</style>
+<canvas id="glcanvas" width="160" height="120" tabindex="1"></canvas><button id="other">Other control</button>
+<script>
+window.evidence={messages:[],errors:[],events:[],touches:[],focus:[],frames:[],trusted:[],ready:false};
+for(const level of ["log","info","warn","error"]) {
+ const original=console[level]; console[level]=(...args)=>{
+  const value=args.join(" "); evidence.messages.push(value); original.apply(console,args);
+  const parts=value.split(" ");
+  if(parts[0]==="INPUT_READY") evidence.ready=true;
+  if(parts[0]==="INPUT_EVENT") evidence.events.push({type:parts[1],button:Number(parts[2]),x:Number(parts[3]),y:Number(parts[4])});
+  if(parts[0]==="INPUT_TOUCH") evidence.touches.push({phase:parts[1],id:Number(parts[2])});
+  if(parts[0]==="INPUT_FOCUS") evidence.focus.push(parts[1]);
+  if(parts[0]==="INPUT_FRAME") evidence.frames.push({frame:Number(parts[1]),flags:Number(parts[2]),x:Number(parts[3]),y:Number(parts[4])});
+ };
+}
+for(const name of ["mousedown","mouseup"]) window.addEventListener(name,event=>evidence.trusted.push({type:name,trusted:event.isTrusted,onCanvas:event.target.id==="glcanvas"}));
+window.syntheticTouch=(type,ids)=>{
+ const event=new Event(type,{bubbles:true,cancelable:true});
+ Object.defineProperty(event,"changedTouches",{value:ids.map(identifier=>({identifier,clientX:70,clientY:80}))});
+ document.querySelector("canvas").dispatchEvent(event);
+};
+window.inputSnapshot=()=>({flags:wasm_exports.input_flags(),x:wasm_exports.input_x(),y:wasm_exports.input_y(),
+ focused:document.hasFocus(),locked:document.pointerLockElement===document.querySelector("canvas"),version:gl.getParameter(gl.VERSION),...evidence});
+window.syntheticMouse=(type,button=0,target=document.querySelector("canvas"))=>target.dispatchEvent(new MouseEvent(type,{bubbles:true,clientX:70,clientY:80,button}));
+document.querySelector("canvas").addEventListener("contextmenu",event=>{event.preventDefault();evidence.contextMenus=(evidence.contextMenus||0)+1;});
+window.armGrab=()=>document.querySelector("canvas").addEventListener("mousedown",()=>wasm_exports.input_grab(true),{once:true});
+window.onerror=value=>evidence.errors.push(String(value));
+window.onunhandledrejection=event=>evidence.errors.push(String(event.reason));
+</script>
+<script src="/js/mq_js_bundle.js"></script>
+<script>load(new URLSearchParams(location.search).get("wasm"));</script>

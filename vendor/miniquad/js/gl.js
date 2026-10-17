@@ -113,6 +113,36 @@ function init_webgl(version) {
     }
 }
 
+// Adapted from Miniquad #602 (TheRedDeveloper, 876e2fb92fa5339071dbaf5d3ef40df4f8901bb7):
+// listen on the owning window, but terminate only presses originating here.
+function setup_owned_mouse_input() {
+    const ownedButtons = new Set();
+    let lastPosition = { x: 0, y: 0 };
+    canvas.onmousemove = function (event) {
+        lastPosition = mouse_relative_position(event.clientX, event.clientY);
+        wasm_exports.mouse_move(Math.floor(lastPosition.x), Math.floor(lastPosition.y));
+        if (event.movementX != 0 || event.movementY != 0) {
+            wasm_exports.raw_mouse_move(Math.floor(event.movementX), Math.floor(event.movementY));
+        }
+    };
+    canvas.onmousedown = function (event) {
+        lastPosition = mouse_relative_position(event.clientX, event.clientY);
+        ownedButtons.add(event.button);
+        wasm_exports.mouse_down(lastPosition.x, lastPosition.y, into_sapp_mousebutton(event.button));
+    };
+    window.addEventListener("mouseup", function (event) {
+        if (!ownedButtons.delete(event.button)) return;
+        lastPosition = mouse_relative_position(event.clientX, event.clientY);
+        wasm_exports.mouse_up(lastPosition.x, lastPosition.y, into_sapp_mousebutton(event.button));
+    }, true);
+    return function () {
+        for (const button of ownedButtons) {
+            ownedButtons.delete(button);
+            wasm_exports.mouse_up(lastPosition.x, lastPosition.y, into_sapp_mousebutton(button));
+        }
+    };
+}
+
 canvas.focus();
 
 canvas.requestPointerLock = canvas.requestPointerLock ||
@@ -1194,41 +1224,13 @@ var importObject = {
             resize(canvas);
         },
         run_animation_loop: function (blocking) {
-            canvas.onmousemove = function (event) {
-                var relative_position = mouse_relative_position(event.clientX, event.clientY);
-                var x = relative_position.x;
-                var y = relative_position.y;
-
-                // TODO: do not send mouse_move when cursor is captured
-                wasm_exports.mouse_move(Math.floor(x), Math.floor(y));
-
-                // TODO: check that mouse is captured?
-                if (event.movementX != 0 || event.movementY != 0) {
-                    wasm_exports.raw_mouse_move(Math.floor(event.movementX), Math.floor(event.movementY));
-                }
-            };
-            canvas.onmousedown = function (event) {
-                var relative_position = mouse_relative_position(event.clientX, event.clientY);
-                var x = relative_position.x;
-                var y = relative_position.y;
-
-                var btn = into_sapp_mousebutton(event.button);
-                wasm_exports.mouse_down(x, y, btn);
-            };
+            var releaseOwnedMouseButtons = setup_owned_mouse_input();
             // SO WEB SO CONSISTENT
             canvas.addEventListener('wheel',
                 function (event) {
                     event.preventDefault();
                     wasm_exports.mouse_wheel(-event.deltaX, -event.deltaY);
                 });
-            canvas.onmouseup = function (event) {
-                var relative_position = mouse_relative_position(event.clientX, event.clientY);
-                var x = relative_position.x;
-                var y = relative_position.y;
-
-                var btn = into_sapp_mousebutton(event.button);
-                wasm_exports.mouse_up(x, y, btn);
-            };
             canvas.onkeydown = function (event) {
                 var sapp_key_code = into_sapp_keycode(event.code);
                 switch (sapp_key_code) {
@@ -1387,6 +1389,7 @@ var importObject = {
                 // However, the document becomes invisible
                 let hasFocus = document.hasFocus() && document.visibilityState == "visible";
                 if (lastFocus != hasFocus) {
+                    if (!hasFocus) releaseOwnedMouseButtons();
                     wasm_exports.focus(hasFocus);
                     lastFocus = hasFocus;
                 }

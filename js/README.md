@@ -1,11 +1,13 @@
 # Paired browser runtime
 
-`mq_js_bundle.js` is the included, fork-owned runtime paired with Macroquad
-**0.5.0** for HTML5/WASM/WebGL games. It requires no private Zubspace files.
+`mq_js_bundle.js` is the included, fork-owned runtime paired with this fork's
+current development source for HTML5/WASM/WebGL games. Release-template
+version fields remain**0.5.0** pending release preparation; current input changes
+belong to planned0.5.1 and do not replace the immutable0.5.0 release asset. It requires no private Zubspace files.
 It is generated from the published upstream **0.4.16** aggregate plus the
 reviewed local fixes, including `audio_source_state` extension v1. Miniquad's
 Rust dependency remains the locally patched **0.4.11** source.
-The initializer is taken from `vendor/miniquad/js/gl.js`, with an additive
+The initializer and owned-mouse helper are taken from `vendor/miniquad/js/gl.js`, with an additive
 `webgl_selection_version` extension v1. Auto (mode 0) tries WebGL2 then WebGL1
 only on context-creation failure; explicit modes 1/2 are strict. Old runtime
 bundles without the extension are rejected before context creation.

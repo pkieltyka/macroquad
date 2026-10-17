@@ -12,6 +12,9 @@ pub(crate) struct TextureSlotGuarded {
     id: miniquad::TextureId,
     key: u64,
     owner: Rc<crate::GraphicsOwner>,
+    // Managed textures keep their creation size: every update asserts it.
+    width: u32,
+    height: u32,
 }
 impl PartialEq for TextureSlotGuarded {
     fn eq(&self, other: &Self) -> bool {
@@ -48,6 +51,13 @@ impl TextureHandle {
 }
 impl PartialEq for TextureHandle {
     fn eq(&self, other: &Self) -> bool {
+        // Batching compares textures for every sprite. One live slot is one
+        // texture; GPU use of its id still asserts the current owner.
+        if let (Self::Managed(a), Self::Managed(b)) = (self, other) {
+            if Rc::ptr_eq(a, b) {
+                return true;
+            }
+        }
         self.raw() == other.raw()
     }
 }
@@ -58,7 +68,7 @@ impl TexturesContext {
     pub fn new(owner: Rc<crate::GraphicsOwner>) -> Self {
         Self { owner }
     }
-    fn store_texture(&mut self, id: miniquad::TextureId) -> TextureHandle {
+    fn store_texture(&mut self, id: miniquad::TextureId, width: u32, height: u32) -> TextureHandle {
         self.owner.textures.set(
             self.owner
                 .textures
@@ -74,6 +84,8 @@ impl TexturesContext {
             id,
             key,
             owner: self.owner.clone(),
+            width,
+            height,
         }))
     }
     pub fn len(&self) -> usize {
@@ -547,27 +559,31 @@ pub fn render_target_ex(width: u32, height: u32, params: RenderTargetParams) -> 
                 ..Default::default()
             });
             let color = Texture2D {
-                texture: context.textures.store_texture(color_id),
+                texture: context.textures.store_texture(color_id, width, height),
             };
             let depth = params.depth.then(|| Texture2D {
-                texture: context.textures.store_texture(backend.new_render_texture(
-                    miniquad::TextureParams {
+                texture: context.textures.store_texture(
+                    backend.new_render_texture(miniquad::TextureParams {
                         width,
                         height,
                         format: miniquad::TextureFormat::Depth,
                         sample_count: params.sample_count,
                         ..Default::default()
-                    },
-                )),
+                    }),
+                    width,
+                    height,
+                ),
             });
             let resolve = (params.sample_count > 1).then(|| Texture2D {
-                texture: context.textures.store_texture(backend.new_render_texture(
-                    miniquad::TextureParams {
+                texture: context.textures.store_texture(
+                    backend.new_render_texture(miniquad::TextureParams {
                         width,
                         height,
                         ..Default::default()
-                    },
-                )),
+                    }),
+                    width,
+                    height,
+                ),
             });
             let resolve_id = resolve.as_ref().map(|texture| [texture.raw_miniquad_id()]);
             let pass = backend.new_render_pass_mrt(
@@ -647,7 +663,7 @@ pub fn draw_texture_ex(
     params: DrawTextureParams,
 ) {
     crate::with_context(|context| {
-        let [mut width, mut height] = texture.size().to_array();
+        let [mut width, mut height] = texture.draw_size().to_array();
 
         let Rect {
             x: mut sx,
@@ -702,24 +718,13 @@ pub fn draw_texture_ex(
             vec2(x, y + h) - pivot,
         ];
         let r = params.rotation;
-        let p = [
-            vec2(
-                p[0].x * r.cos() - p[0].y * r.sin(),
-                p[0].x * r.sin() + p[0].y * r.cos(),
-            ) + m,
-            vec2(
-                p[1].x * r.cos() - p[1].y * r.sin(),
-                p[1].x * r.sin() + p[1].y * r.cos(),
-            ) + m,
-            vec2(
-                p[2].x * r.cos() - p[2].y * r.sin(),
-                p[2].x * r.sin() + p[2].y * r.cos(),
-            ) + m,
-            vec2(
-                p[3].x * r.cos() - p[3].y * r.sin(),
-                p[3].x * r.sin() + p[3].y * r.cos(),
-            ) + m,
-        ];
+        // Unrotated sprites are the common case; WASM sin/cos are library calls.
+        let p = if r == 0. {
+            p.map(|p| p + m)
+        } else {
+            let (sin, cos) = r.sin_cos();
+            p.map(|p| vec2(p.x * cos - p.y * sin, p.x * sin + p.y * cos) + m)
+        };
         #[rustfmt::skip]
     let vertices = [
         Vertex::new(p[0].x, p[0].y, 0.,  sx      /width,  sy      /height, color),
@@ -752,7 +757,11 @@ pub fn get_screen_data() -> Image {
         });
 
         let texture = Texture2D {
-            texture: context.textures.store_texture(texture_id),
+            texture: context.textures.store_texture(
+                texture_id,
+                context.screen_width as _,
+                context.screen_height as _,
+            ),
         };
 
         texture.grab_screen();
@@ -874,7 +883,9 @@ impl Texture2D {
         let texture =
             crate::with_backend(|backend| backend.new_texture_from_rgba8(width, height, bytes));
         crate::with_context(|ctx| {
-            let texture = ctx.textures.store_texture(texture);
+            let texture = ctx
+                .textures
+                .store_texture(texture, width.into(), height.into());
             let texture = Texture2D { texture };
             texture.set_filter(ctx.default_filter_mode);
             ctx.texture_batcher.add_unbatched(&texture);
@@ -952,6 +963,15 @@ impl Texture2D {
                 &image.bytes,
             );
         })
+    }
+
+    /// Size for drawing. A managed texture's dimensions are fixed at creation,
+    /// so this skips the backend lookup; submitting it still checks ownership.
+    pub(crate) fn draw_size(&self) -> Vec2 {
+        match &self.texture {
+            TextureHandle::Managed(slot) => vec2(slot.width as f32, slot.height as f32),
+            _ => self.size(),
+        }
     }
 
     /// Returns the width of this texture.
@@ -1110,6 +1130,10 @@ impl Batcher {
     }
 
     pub fn get(&mut self, texture: &Texture2D) -> Option<(Texture2D, Rect)> {
+        // Most programs never build a texture atlas; don't hash every sprite.
+        if self.atlas.sprites.is_empty() {
+            return None;
+        }
         let id = texture.sprite_key()?;
         let uv_rect = self.atlas.get_uv_rect(id)?;
         Some((Texture2D::unmanaged(self.atlas.texture()), uv_rect))
@@ -1307,7 +1331,7 @@ mod ownership_tests {
         let (owner, deleted) = owner();
         let mut textures = TexturesContext::new(owner.clone());
         let texture = Texture2D {
-            texture: textures.store_texture(id(7)),
+            texture: textures.store_texture(id(7), 1, 1),
         };
         let clone = texture.clone();
         owner.with(|_| {
@@ -1336,7 +1360,7 @@ mod ownership_tests {
         let _installed = Installed::new(first.clone());
         let mut textures = TexturesContext::new(first.clone());
         let texture = Texture2D {
-            texture: textures.store_texture(id(7)),
+            texture: textures.store_texture(id(7), 1, 1),
         };
         let weak = texture.weak_clone();
         assert_eq!(weak.raw_miniquad_id(), id(7));
@@ -1355,7 +1379,7 @@ mod ownership_tests {
         let weak = Rc::downgrade(&owner);
         let mut textures = TexturesContext::new(owner.clone());
         let texture = Texture2D {
-            texture: textures.store_texture(id(7)),
+            texture: textures.store_texture(id(7), 1, 1),
         };
         owner.active.set(false);
         drop((owner, textures));

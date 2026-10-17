@@ -228,6 +228,48 @@
      }
  };
 
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -26,17 +26,37 @@
+
+ pub use native::gl;
+
++/// Hashes the sequential internal resource ids. Several lookups run for every
++/// draw call; SipHash's denial-of-service resistance buys nothing for them.
++#[derive(Default, Clone, Copy)]
++pub(crate) struct ResourceIdHasher(u64);
++
++impl std::hash::Hasher for ResourceIdHasher {
++    fn finish(&self) -> u64 {
++        self.0
++    }
++    fn write(&mut self, bytes: &[u8]) {
++        for &byte in bytes {
++            self.0 = (self.0.rotate_left(8) ^ u64::from(byte)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
++        }
++    }
++    fn write_usize(&mut self, id: usize) {
++        // Fibonacci hashing spreads consecutive ids across the table's bits.
++        self.0 = (id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
++    }
++}
++
+ #[derive(Clone)]
+ pub(crate) struct ResourceManager<T> {
+     id: usize,
+-    resources: HashMap<usize, T>,
++    resources: HashMap<usize, T, std::hash::BuildHasherDefault<ResourceIdHasher>>,
+ }
+
+ impl<T> Default for ResourceManager<T> {
+     fn default() -> Self {
+         Self {
+             id: 0,
+-            resources: HashMap::new(),
++            resources: HashMap::default(),
+         }
+     }
+ }
 --- a/src/conf.rs
 +++ b/src/conf.rs
 @@ -94,10 +94,13 @@

@@ -1,0 +1,134 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html,body { margin:0; width:640px; height:480px; overflow:hidden } canvas { width:640px; height:480px; display:block }</style>
+<canvas id="glcanvas" width="640" height="480" tabindex="1"></canvas>
+<script type="module">
+import { verifyPixels, comparePixels } from "./oracle.mjs";
+
+window.evidence = { messages: [], errors: [], trials: [], pictures: [], completed: false,
+    baselineTextures: null, finalTextures: null, shutdownTextures: null,
+    workload: { seed: 1592590400, pose: "fixed", tiles:1200, ships:64, projectiles:512,
+        labels:32, glyphsPerLabel:8, hudGlyphs:16, generatedSheets:3, warmupFrames:6, measuredFrames:18, trials:3 },
+    viewport: { width:640, height:480, devicePixelRatio:devicePixelRatio },
+    documentViewport: { width:innerWidth, height:innerHeight },
+    userAgent:navigator.userAgent, gpuTimingMs:null,
+    timing: { clock:"performance.now via fixture-only env.now adapter; browser precision limits apply",
+        cpu:"Scene API issuance including immediate camera flushes; excludes deferred end-frame submission and GPU completion",
+        raf:"requestAnimationFrame timestamp intervals including vsync, scheduling, end-frame work and fixture instrumentation; not GPU duration",
+        diagnosticOnly:true } };
+const liveTextures = new Set(), pictureHashes = [];
+let referencePixels, latestRaf, activeTrial;
+const requestFrame = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = callback => requestFrame(timestamp => {
+    latestRaf = timestamp;
+    if (activeTrial) {
+        activeTrial.rafTimestampsMs.push(timestamp);
+        activeTrial.visibility.push(document.visibilityState);
+    }
+    callback(timestamp);
+});
+for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+    const create = prototype.createTexture, remove = prototype.deleteTexture;
+    prototype.createTexture = function (...args) {
+        const texture = create.apply(this,args);
+        if (texture) liveTextures.add(texture);
+        return texture;
+    };
+    prototype.deleteTexture = function (texture) {
+        if (texture && !liveTextures.delete(texture)) evidence.errors.push("Duplicate/unowned texture deletion");
+        return remove.call(this,texture);
+    };
+}
+function verify(trial, variant) {
+    const pixels = new Uint8Array(640 * 480 * 4);
+    gl.readPixels(0,0,640,480,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+    const witnesses = verifyPixels(pixels,640,480);
+    if (referencePixels) comparePixels(referencePixels,pixels);
+    else { referencePixels = pixels; evidence.previewDataUrl = document.querySelector("canvas").toDataURL("image/png"); }
+    const error = gl.getError();
+    if (error !== gl.NO_ERROR) throw new Error(`WebGL error ${error}`);
+    const picture = { trial, variant, witnesses, equivalent:true, glError:error };
+    evidence.pictures.push(picture);
+    pictureHashes.push(crypto.subtle.digest("SHA-256",pixels).then(hash => {
+        picture.rgbaSha256 = Array.from(new Uint8Array(hash),b => b.toString(16).padStart(2,"0")).join("");
+    }));
+}
+function message(value) {
+    let match;
+    if (value.startsWith("SCENE_BASELINE ")) {
+        evidence.baselineTextures = liveTextures.size;
+        evidence.baselineOwnedTextures = Number(value.split(" ")[1]);
+    }
+    if (value === "SCENE_ASSETS_READY" && liveTextures.size !== evidence.baselineTextures + 3) throw new Error("Expected exactly three generated atlas textures");
+    if ((match = /^SCENE_START (\d+) (camera|screen)$/.exec(value))) {
+        if (activeTrial || !Number.isFinite(latestRaf)) throw new Error("Invalid trial start");
+        activeTrial = { trial:Number(match[1]), variant:match[2], rafTimestampsMs:[latestRaf], visibility:[document.visibilityState] };
+    }
+    if ((match = /^SCENE_END (\d+) (camera|screen) (\[.*\])$/.exec(value))) {
+        if (!activeTrial || activeTrial.trial !== Number(match[1]) || activeTrial.variant !== match[2]) throw new Error("Mismatched trial end");
+        activeTrial.cpuSceneApiMs = JSON.parse(match[3]);
+        activeTrial.rafIntervalsMs = activeTrial.rafTimestampsMs.slice(1).map((time,i) => time - activeTrial.rafTimestampsMs[i]);
+        evidence.trials.push(activeTrial);
+        activeTrial = null;
+    }
+    if ((match = /^SCENE_VERIFY (\d+) (camera|screen)$/.exec(value))) verify(Number(match[1]),match[2]);
+    if (value.startsWith("SCENE_CLEANUP ")) {
+        evidence.finalTextures = liveTextures.size;
+        evidence.finalOwnedTextures = Number(value.split(" ")[1]);
+        if (evidence.finalTextures !== evidence.baselineTextures) throw new Error("Generated atlas textures survived cleanup");
+    }
+}
+for (const level of ["log","info","warn","error"]) {
+    const original = console[level];
+    console[level] = (...args) => {
+        const value = args.join(" ");
+        original.apply(console,args);
+        if (level === "error") evidence.errors.push(value);
+        try { message(value); } catch (error) { evidence.errors.push(String(error)); }
+        if (value === "browser scene regression: passed") {
+            // Main's return destroys the engine after this log call. Observe its actual cleanup.
+            Promise.all(pictureHashes).then(() => {
+                const deadline = performance.now() + 2000;
+                const finish = () => {
+                    evidence.shutdownTextures = liveTextures.size;
+                    if (liveTextures.size && performance.now() < deadline) return setTimeout(finish,20);
+                    if (liveTextures.size) evidence.errors.push("Textures survived engine shutdown");
+                    evidence.completed = evidence.errors.length === 0;
+                    evidence.messages.push(value);
+                };
+                setTimeout(finish,0);
+            }).catch(error => evidence.errors.push(String(error)));
+        } else evidence.messages.push(value);
+    };
+}
+window.onerror = value => evidence.errors.push(String(value));
+window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
+try {
+    if (devicePixelRatio !== 1) throw new Error("Scene requires DPR1");
+    if (innerWidth < 640 || innerHeight < 480) throw new Error("Browser viewport does not fit the scene");
+    const parameters = new URLSearchParams(location.search);
+    await new Promise((resolve,reject) => {
+        const script = document.createElement("script"); script.src = "/js/mq_js_bundle.js";
+        script.onload=resolve; script.onerror=reject; document.head.append(script);
+    });
+    const initialize = importObject.env.init_webgl;
+    // The shipped wall clock is millisecond-quantized. Keep runtime bytes intact
+    // and use the browser's monotonic clock only inside this diagnostic fixture.
+    importObject.env.now = () => performance.now() / 1000;
+    importObject.env.init_webgl = requested => {
+        initialize(requested);
+        const extension = gl.getExtension("WEBGL_debug_renderer_info");
+        evidence.context = { requested, actual:gl instanceof WebGL2RenderingContext ? 2 : 1,
+            version:gl.getParameter(gl.VERSION), renderer:gl.getParameter(gl.RENDERER),
+            unmaskedRenderer:extension ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL) : null,
+            width:gl.drawingBufferWidth, height:gl.drawingBufferHeight };
+    };
+    // Unknown imports must not be replaced with permissive loader stubs.
+    add_missing_functions_stabs = module => {
+        for (const item of WebAssembly.Module.imports(module)) {
+            if (typeof importObject[item.module]?.[item.name] !== "function") throw new Error(`Missing ${item.module}.${item.name}`);
+        }
+    };
+    load(parameters.get("wasm"));
+} catch (error) { evidence.errors.push(String(error)); }
+</script>

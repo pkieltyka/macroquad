@@ -54,7 +54,7 @@ def validate_audio_unlock(result, gesture_sent):
         raise AssertionError("Audio context did not resume to running after the trusted gesture")
 
 
-def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30):
+def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30, force_dpr1=False):
     driver_env = os.environ.copy()
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -66,6 +66,8 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
             "args": ["--headless=new", "--no-sandbox", "--disable-dev-shm-usage",
                      "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
         }}
+        if force_dpr1:
+            options["goog:chromeOptions"]["args"].append("--force-device-scale-factor=1")
         command = [os.environ.get("CHROMEDRIVER_BIN", "chromedriver"), f"--port={port}"]
     else:
         # Set X11 on the driver process so Firefox inherits it even when the
@@ -75,6 +77,10 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
             "binary": os.environ.get("FIREFOX_BIN") or shutil.which("firefox"),
             "prefs": {"webgl.force-enabled": True, "webgl.disabled": False},
         }}
+        if force_dpr1:
+            options["moz:firefoxOptions"]["prefs"]["layout.css.devPixelsPerPx"] = "1.0"
+            # OS text scaling otherwise multiplies devPixelsPerPx in Firefox.
+            options["moz:firefoxOptions"]["prefs"]["browser.display.os-zoom-behavior"] = 0
         command = [os.environ.get("GECKODRIVER_BIN", "geckodriver"), "--port", str(port)]
     session = None
     with (OUTPUT / f"{browser}-driver.log").open("w") as log:
@@ -91,6 +97,8 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
                     time.sleep(0.1)
             result = request(port, "POST", "/session", {"capabilities": {"alwaysMatch": options}})
             session = result["sessionId"]
+            if force_dpr1:
+                request(port, "POST", f"/session/{session}/window/rect", {"width": 800, "height": 650})
             request(port, "POST", f"/session/{session}/url", {"url": url})
             deadline = time.monotonic() + timeout
             unlocked = False

@@ -177,7 +177,7 @@ With those browser/driver/display tools, Python 3.12+, Node 22+ and the WASM Rus
 target available locally, run the same gate from the fork root:
 
 ```sh
-xvfb-run -a bash tests/browser_release.sh
+xvfb-run -a -s "-screen 0 1280x960x24 -dpi 96" bash tests/browser_release.sh
 ```
 
 It builds the finite WASM examples, checks genuine imports/ABIs, then runs
@@ -191,6 +191,12 @@ texture/FBO cleanup; failures require the expected error before resources are
 created. Both WebGL paths remain supported. Audio evidence
 observes the actual decoding context's runtime `resume()` call and later running
 state; it does not qualify every browser autoplay-policy setting or audio device.
+
+The same browser job runs a [generated tile/sprite/bitmap-HUD scene](browser-scene.md)
+in explicit WebGL1/2. Its ordered camera-switch and screen-space-label variants
+must satisfy independent pixel witnesses and full-frame equivalence, with GL
+and texture cleanup checks. Repeated release-WASM CPU/cadence trials record
+diagnostics, not timing thresholds, GPU time or a game FPS improvement.
 
 The existing native, MSRV and Miri jobs provide supporting shared-Rust/backend
 correctness evidence. For those checks install Linux X11/GL development libraries,

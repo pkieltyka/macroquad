@@ -49,7 +49,7 @@ jobs:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
           CHROMEDRIVER_BIN: ${{ steps.chrome.outputs.chromedriver-path }}
           FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
-        run: xvfb-run -a bash tests/browser_release.sh
+        run: xvfb-run -a -s "-screen 0 1280x960x24 -dpi 96" bash tests/browser_release.sh
       - name: Preserve finite browser evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -58,6 +58,7 @@ jobs:
           path: |
             target/browser-release/**/*.json
             target/browser-release/**/*.log
+            target/browser-release/scene/**/*.png
             target/browser-release/environment.txt
             target/browser-release/checksums.sha256
           if-no-files-found: warn
@@ -75,7 +76,9 @@ jobs:
           node --test tests/browser_runtime.test.mjs
           node --test tests/audio_unlock_gate.test.mjs
           node --test tests/webgl_selection.test.mjs
+          node --test tests/browser_scene/oracle.test.mjs
           python3 tests/test_browser_audio_gate.py
+          python3 tests/browser_scene/test_protocol.py
           python3 tests/test_prepare_release.py
       - name: Install native graphics and audio dependencies
         run: |
@@ -87,7 +90,7 @@ jobs:
           rustup target add --toolchain stable wasm32-unknown-unknown
       - name: Format fork code and patched backend files
         run: |
-          for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml; do
+          for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml tests/browser_scene/Cargo.toml; do
             cargo +stable fmt --manifest-path "$manifest" -- --check
           done
           rustfmt +stable --edition 2018 --check vendor/miniquad/src/conf.rs vendor/miniquad/src/native/wasm.rs vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs vendor/miniquad/src/native/linux_x11/clipboard.rs vendor/miniquad/src/native/linux_x11/drag_n_drop.rs

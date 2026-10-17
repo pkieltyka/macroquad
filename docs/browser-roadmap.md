@@ -27,7 +27,9 @@ add release blockers without evidence of a current defect.
   Miniquad #682 or #672. Match rendering work, renderer, viewport and build
   identity; record frame/startup series and limits. Preserve the historical
   Chrome Extreme lower-cadence concern without claiming isolated attribution or
-  an improvement from this release.
+  an improvement from this release. The [generated scene](browser-scene.md) adds
+  repeated matched CPU/cadence diagnostics and pixel correctness in Linux-hosted
+  Chrome/Firefox WebGL1/2; it does not complete physical-GPU or game qualification.
 - [ ] Evaluate Miniquad #602 for relevant browser correctness using refreshed
   source/discussion and a concrete regression before adopting a change.
 - [ ] Keep native platform work focused on maintenance and development/test needs.

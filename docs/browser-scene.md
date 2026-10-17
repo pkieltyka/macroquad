@@ -85,3 +85,22 @@ atlas tiles in `src/game/render.rs` and projectile sprites in
 those sources and all game assets/services remain outside its dependencies.
 Broader browser qualification and controlled GPU/performance baselines remain
 on the [pending browser roadmap](browser-roadmap.md).
+
+For optional submission diagnostics, add `--submissions` to `browser.py` and use
+an output directory such as `target/browser-efficiency-0.5.1/`. The fixture wraps
+WebGL calls only in the post-timing verification frame, from `SCENE_END` through
+the next RAF entry, including end-frame submission/commit. It records actual
+plain/instanced draw calls, submitted indices, buffer update bytes/calls,
+framebuffer/texture binds and buffer/texture allocation or upload churn. This
+mode keeps wrappers out of timing trials and leaves the default browser suite
+unchanged. `make check-runtime` tests the observer and rejects incomplete count
+protocols without launching browsers.
+
+The count oracle independently requires 2,049 quads, 8,196 vertices (40 bytes
+each), and 12,294 u16 indices for both variants, with the existing independent
+pixel witnesses and whole-frame equality still required. Counts report WebGL
+calls, not driver stalls, GPU durations, actual framebuffer transitions or
+startup/retained capacity. The scene uses the default framebuffer and warmed
+textures: it does not establish offscreen/MSAA or atlas-growth performance.
+See the [0.5.1 analysis and scope](../plan.md) for the recorded baseline and
+separate proposed experiments.

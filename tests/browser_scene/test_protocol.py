@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.dont_write_bytecode = True
-from browser import validate
+from browser import validate, validate_submissions
 
 
 def complete_result():
@@ -69,6 +69,49 @@ class SceneProtocol(unittest.TestCase):
                 mutate(broken)
                 with self.assertRaises(AssertionError):
                     validate(broken, 1)
+
+
+class SubmissionProtocol(unittest.TestCase):
+    def fixture(self):
+        order = [(0, "camera"), (0, "screen"), (1, "screen"), (1, "camera"), (2, "camera"), (2, "screen")]
+        return {"submissions": {"frames": [{"trial": trial, "variant": variant, "counts": {
+            "vertexUploadBytes": 327840, "indexUploadBytes": 24588, "bufferDataBytes": 0,
+            "submittedIndices": 12294, "submittedVertices": 0,
+            "calls": {"drawElementsInstanced": 37 if variant == "camera" else 6,
+                      "bufferSubData": 74 if variant == "camera" else 12,
+                      "bindFramebuffer": 76 if variant == "camera" else 14},
+        }} for trial, variant in order]}}
+
+    def test_complete_matched_work_is_accepted(self):
+        validate_submissions(self.fixture())
+        plain = self.fixture()
+        for frame in plain["submissions"]["frames"]:
+            calls = frame["counts"]["calls"]
+            calls["drawElements"] = calls.pop("drawElementsInstanced")
+        validate_submissions(plain)
+
+    def test_incomplete_work_calls_and_resource_churn_are_rejected(self):
+        mutations = [
+            lambda r: r["submissions"]["frames"].pop(),
+            lambda r: r["submissions"]["frames"].reverse(),
+            lambda r: r["submissions"]["frames"][0]["counts"].update(vertexUploadBytes=327680),
+            lambda r: r["submissions"]["frames"][0]["counts"].update(indexUploadBytes=24576),
+            lambda r: r["submissions"]["frames"][0]["counts"].update(submittedIndices=12288),
+            lambda r: r["submissions"]["frames"][0]["counts"].update(bufferDataBytes=1024),
+            lambda r: r["submissions"]["frames"][0]["counts"].pop("bufferDataBytes"),
+            lambda r: r["submissions"]["frames"][0]["counts"].update(submittedVertices=False),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(drawElementsInstanced=0),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bufferSubData=2),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bindFramebuffer=0),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(createTexture=1),
+            lambda r: r["submissions"]["frames"][0]["counts"]["calls"].update(bufferData=True),
+        ]
+        for index, mutate in enumerate(mutations):
+            with self.subTest(mutation=index):
+                result = self.fixture()
+                mutate(result)
+                with self.assertRaises(AssertionError):
+                    validate_submissions(result)
 
 
 if __name__ == "__main__":

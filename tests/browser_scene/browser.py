@@ -74,6 +74,36 @@ def build(output):
             "wasmSha256": {str(version): sha256(output / f"webgl{version}.wasm") for version in (1, 2)}}
 
 
+def validate_submissions(result):
+    frames = result.get("submissions", {}).get("frames", [])
+    expected = [(0, "camera"), (0, "screen"), (1, "screen"), (1, "camera"), (2, "camera"), (2, "screen")]
+    if [(frame.get("trial"), frame.get("variant")) for frame in frames] != expected:
+        raise AssertionError("Missing or reordered submission frames")
+    # Independent workload arithmetic: 1,200 tiles + 64 ships + 512 projectiles
+    # + 32*8 label glyphs + HUD rectangle + 16 HUD glyphs = 2,049 quads.
+    for frame in frames:
+        counts = frame.get("counts", {})
+        calls = counts.get("calls", {})
+        for name in ("vertexUploadBytes", "indexUploadBytes", "bufferDataBytes", "submittedIndices", "submittedVertices"):
+            value = counts.get(name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise AssertionError("Invalid submission byte/work count")
+        if (counts.get("vertexUploadBytes") != 2049 * 4 * 40
+                or counts.get("indexUploadBytes") != 2049 * 6 * 2
+                or counts.get("submittedIndices") != 2049 * 6
+                or counts.get("submittedVertices") != 0
+                or counts.get("bufferDataBytes") != 0):
+            raise AssertionError("Submission workload differs from the fixed scene")
+        for name, value in calls.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise AssertionError("Invalid submission call count")
+        draws = calls.get("drawElements", 0) + calls.get("drawElementsInstanced", 0)
+        if draws <= 0 or calls.get("bufferSubData") != draws * 2 or calls.get("bindFramebuffer", 0) < draws:
+            raise AssertionError("Missing actual submission calls")
+        if any(calls.get(name, 0) for name in ("bufferData", "createBuffer", "deleteBuffer", "createTexture", "deleteTexture", "texImage2D", "texSubImage2D", "drawArrays", "drawArraysInstanced")):
+            raise AssertionError("Unexpected warm scene resource churn")
+
+
 def validate(result, version):
     if result.get("errors") or not result.get("completed"):
         raise AssertionError("Scene did not complete cleanly")
@@ -123,6 +153,7 @@ def summarize(result):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--submissions", action="store_true", help="Observe post-timing frames only; no performance claim")
     parser.add_argument("--output", type=Path, default=ROOT / "target/browser-scene")
     args = parser.parse_args()
     output = args.output.resolve()
@@ -139,11 +170,13 @@ def main():
                 driver.OUTPUT = output / f"{browser}-webgl{version}"
                 driver.OUTPUT.mkdir(exist_ok=True)
                 wasm = "/" + (output / f"webgl{version}.wasm").relative_to(ROOT).as_posix()
-                url = f"http://127.0.0.1:{server.server_port}/tests/browser_scene/case.html?" + urllib.parse.urlencode({"wasm": wasm})
+                url = f"http://127.0.0.1:{server.server_port}/tests/browser_scene/case.html?" + urllib.parse.urlencode({"wasm": wasm, **({"submissions": "1"} if args.submissions else {})})
                 driver.check_browser(browser, url, marker="browser scene regression: passed", check_ui=False, timeout=60, force_dpr1=True)
                 evidence_path = driver.OUTPUT / f"{browser}.json"
                 result = json.loads(evidence_path.read_text())
                 validate(result, version)
+                if args.submissions:
+                    validate_submissions(result)
                 preview = result.pop("previewDataUrl")
                 if not preview.startswith("data:image/png;base64,"):
                     raise AssertionError("Scene preview is not PNG")
@@ -153,6 +186,8 @@ def main():
                 result["diagnostics"] = summarize(result)
                 evidence_path.write_text(json.dumps(result, indent=2) + "\n")
                 summaries[f"{browser}-webgl{version}"] = {"context": result["context"], **result["diagnostics"]}
+                if args.submissions:
+                    summaries[f"{browser}-webgl{version}"]["submissions"] = result["submissions"]
                 print(f"{browser} WebGL{version}: 6 matched visual checks, 108 measured frames, cleanup passed; timing diagnostic only", flush=True)
     finally:
         server.shutdown()

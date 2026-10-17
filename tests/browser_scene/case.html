@@ -4,6 +4,10 @@
 <canvas id="glcanvas" width="640" height="480" tabindex="1"></canvas>
 <script type="module">
 import { verifyPixels, comparePixels } from "./oracle.mjs";
+import { observeSubmission } from "./submission.mjs";
+const submissions = new URLSearchParams(location.search).get("submissions") === "1";
+let endSubmission, submissionFrame;
+if (submissions) window.submissionEvidence = { frames: [] };
 
 window.evidence = { messages: [], errors: [], trials: [], pictures: [], completed: false,
     baselineTextures: null, finalTextures: null, shutdownTextures: null,
@@ -20,6 +24,11 @@ const liveTextures = new Set(), pictureHashes = [];
 let referencePixels, latestRaf, activeTrial;
 const requestFrame = window.requestAnimationFrame.bind(window);
 window.requestAnimationFrame = callback => requestFrame(timestamp => {
+    if (endSubmission) {
+        submissionFrame.counts = endSubmission();
+        endSubmission = null;
+        window.submissionEvidence.frames.push(submissionFrame);
+    }
     latestRaf = timestamp;
     if (activeTrial) {
         activeTrial.rafTimestampsMs.push(timestamp);
@@ -70,6 +79,10 @@ function message(value) {
         activeTrial.rafIntervalsMs = activeTrial.rafTimestampsMs.slice(1).map((time,i) => time - activeTrial.rafTimestampsMs[i]);
         evidence.trials.push(activeTrial);
         activeTrial = null;
+        if (submissions) {
+            submissionFrame = { trial:Number(match[1]), variant:match[2] };
+            endSubmission = observeSubmission(gl);
+        }
     }
     if ((match = /^SCENE_VERIFY (\d+) (camera|screen)$/.exec(value))) verify(Number(match[1]),match[2]);
     if (value.startsWith("SCENE_CLEANUP ")) {
@@ -90,6 +103,7 @@ for (const level of ["log","info","warn","error"]) {
             Promise.all(pictureHashes).then(() => {
                 const deadline = performance.now() + 2000;
                 const finish = () => {
+                    if (submissions) evidence.submissions = window.submissionEvidence;
                     evidence.shutdownTextures = liveTextures.size;
                     if (liveTextures.size && performance.now() < deadline) return setTimeout(finish,20);
                     if (liveTextures.size) evidence.errors.push("Textures survived engine shutdown");

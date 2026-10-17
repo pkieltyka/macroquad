@@ -102,7 +102,7 @@ def prepare(root, output, preview=False):
         "rustPairing": rust_pairing,
         "runtimeInputs": {name: digest((root / name).read_bytes()) for name in paths},
         "supportedTargets": ["x86_64-unknown-linux-gnu: X11/OpenGL, no default features or audio", "wasm32-unknown-unknown: audio, WebGL1/2"],
-        "limitations": ["No official RustSec patched-release or clean-audit claim; ttf-parser advisory remains", "No graphics context restoration or GPU timing support", "No physical GPU/native audio-device coverage claim", "No game acceptance renewal on 0.5.0 or performance improvement claim; historical Chrome Extreme measurement limitations remain"],
+        "limitations": ["No official RustSec patched-release or clean-audit claim; ttf-parser advisory remains", "No graphics context restoration or GPU timing support", "No physical GPU/native audio-device coverage claim", "No new game acceptance, whole-frame/FPS or GPU improvement claim; generated CPU API diagnostics and historical game measurements have separate limits"],
         "assets": {name: {"sha256": digest(data), "bytes": len(data)} for name, data in sorted(assets.items())},
     }
     assets["release-manifest.json"] = json_bytes(manifest)

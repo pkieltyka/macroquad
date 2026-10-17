@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,10 +21,12 @@ class ReleaseAssets(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="macroquad-release-test-")
         self.root = Path(self.temp.name)
+        self.version = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
+        self.tag = f"zubspace-v{self.version}"
         for name in ["Cargo.toml", "LICENSE-MIT", "LICENSE-APACHE", "js", "tools",
                      "vendor/browser-runtime", "vendor/miniquad.patch", "vendor/miniquad/js/gl.js",
                      "vendor/miniquad/LICENSE-MIT", "vendor/miniquad/LICENSE-APACHE", "docs/browser-runtime.md",
-                     "docs/releases/zubspace-v0.5.0.md"]:
+                     f"docs/releases/{self.tag}.md"]:
             source, destination = ROOT / name, self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             if source.is_dir():
@@ -46,9 +49,14 @@ class ReleaseAssets(unittest.TestCase):
 
     def test_exact_commit_source_and_runtime_assets_are_reproducible(self):
         first, second = self.root / "target/first", self.root / "target/second"
+        template = (self.root / "js/mq_js_bundle.provenance.json").read_bytes()
         manifest = release.prepare(self.root, first)
         release.prepare(self.root, second)
         self.assertTrue(manifest["publishable"])
+        self.assertEqual(manifest["version"], self.version)
+        self.assertEqual(manifest["tag"], self.tag)
+        self.assertEqual((self.root / "js/mq_js_bundle.provenance.json").read_bytes(), template)
+        self.assertIsNone(manifest["runtime"]["rustPackages"]["macroquad"]["source"])
         self.assertEqual(manifest["commit"], self.git("rev-parse", "HEAD"))
         for name in ("macroquad", "miniquad"):
             self.assertTrue(manifest["rustPairing"][name]["source"].endswith(f"#{manifest['commit']}"))
@@ -79,10 +87,25 @@ class ReleaseAssets(unittest.TestCase):
         self.assertFalse(preview["publishable"])
         self.assertFalse(list((self.root / "target/preview").glob("*-source.tar.gz")))
         (self.root / "unreviewed").unlink()
-        self.git("tag", "zubspace-v0.5.0")
+        self.git("tag", self.tag)
         self.git("-c", "user.name=Release Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "new fixture")
         with self.assertRaisesRegex(ValueError, "different commit"):
             release.prepare(self.root, self.root / "target/conflict")
+
+    def test_provenance_version_and_tag_must_match_the_candidate(self):
+        path = self.root / "js/mq_js_bundle.provenance.json"
+        original = json.loads(path.read_text())
+        for field in ("version", "tag"):
+            with self.subTest(field=field):
+                changed = json.loads(json.dumps(original))
+                if field == "version":
+                    changed["rustPackages"]["macroquad"]["version"] = "0.0.0-incompatible"
+                else:
+                    changed["pairing"]["tag"] = "zubspace-v0.0.0-incompatible"
+                path.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError, "provenance and release identity differ"):
+                    release.prepare(self.root, self.root / f"target/mismatch-{field}", preview=True)
+                path.write_text(json.dumps(original))
 
     def test_modified_runtime_is_rejected_even_in_preview(self):
         with (self.root / "js/mq_js_bundle.js").open("a") as handle:

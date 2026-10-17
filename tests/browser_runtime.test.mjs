@@ -194,7 +194,7 @@ function typedVoid() {
 test("Rust pairing checks both version and source identity and rejects duplicate resolutions", () => {
   const lock = Object.entries(sources.metadata.rustPackages).map(([name, wanted]) => `[[package]]\nname = "${name}"\nversion = "${wanted.version}"\n${wanted.source ? `source = "${wanted.source}"\n` : ""}`).join("\n");
   validateRustPairing(lock, sources.metadata.rustPackages);
-  assert.throws(() => validateRustPairing(lock.replace('version = "0.5.0"', 'version = "0.6.0"'), sources.metadata.rustPackages), /macroquad: Rust\/runtime version mismatch/);
+  assert.throws(() => validateRustPairing(lock.replace(`version = "${sources.metadata.rustPackages.macroquad.version}"`, 'version = "0.0.0-incompatible"'), sources.metadata.rustPackages), /macroquad: Rust\/runtime version mismatch/);
   const changed = structuredClone(sources.metadata.rustPackages);
   changed.macroquad.source = "git+https://example.invalid/fork#abc";
   assert.throws(() => validateRustPairing(lock, changed), /macroquad: Rust\/runtime source mismatch/);

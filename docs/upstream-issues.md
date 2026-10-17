@@ -11,7 +11,8 @@ The [second-pass 0.5.1 plan](../plans/0.5.1-browser-efficiency.md), reviewed
 camera/metadata and candidate-PR facts. It promotes a separate app label/culling
 follow-up, keeps generic capacity/input correctness distinct from game speed,
 and makes atlas-growth work conditional. The decisions and historical evidence
-below retain their original review scope.
+below retain their original review scope; the #277 row is updated for the
+reviewed 0.5.1 owned-input implementation.
 
 ## Confirmed texture-binding cache defect
 
@@ -69,14 +70,14 @@ texture metadata or establish RustSec remediation.
 
 | Issue or PR | Decision for the exact current code |
 | --- | --- |
-| [#1055: strict-mode registrar startup](https://github.com/not-fl3/macroquad/issues/1055) | Confirmed separately and assigned to the browser-runtime batch. Preserve its scoped registrar declaration fix, runtime source/hash, and strict-startup regression. The vendor's original JavaScript is retained unchanged. |
+| [#1055: strict-mode registrar startup](https://github.com/not-fl3/macroquad/issues/1055) | Confirmed separately and assigned to the browser-runtime batch. Preserve its scoped registrar declaration fix, runtime source/hash, and strict-startup regression. The published runtime base remains unchanged; maintained vendored JavaScript includes the separately reviewed fork changes. |
 | [#1041: WASM linking](https://github.com/not-fl3/macroquad/issues/1041) | Keep Zubspace's `--allow-undefined` setting for intentional JavaScript imports and validate every required import against real implementations. Do not add the suggested `--import-memory` workaround: the runtime expects the module's exported memory. The finite fixture rejects fallback import stubs. |
 | [#1020: unnecessary non-MSAA resolves](https://github.com/not-fl3/macroquad/issues/1020) | No new patch. `render_target_ex` only creates resolve attachments when `sample_count > 1`; that distinction is present in base `8d602d3`. Preserve it in runtime/WebGL acceptance. |
 | [#876: render-target slowness](https://github.com/not-fl3/macroquad/issues/876), [#275: Linux/Nvidia CPU use](https://github.com/not-fl3/macroquad/issues/275) | The reported unconditional `glFinish`/`glFlush` path is already gated by `telemetry::is_enabled()` here. No blanket claim about every driver/vsync report; profile an actual supported-target reproduction before further synchronization changes. |
 | [#655: screenshot texture leak](https://github.com/not-fl3/macroquad/issues/655) | The original unmanaged allocation is absent: `get_screen_data` stores its temporary texture in managed resource storage and drops it after readback. This corresponds to the issue's reference to [#666](https://github.com/not-fl3/macroquad/pull/666); ownership/destruction acceptance remains separate. |
 | [#627: missing font-atlas destructor](https://github.com/not-fl3/macroquad/issues/627) | `Atlas` already implements `Drop` and deletes its texture. No duplicate destructor patch; destruction borrowing is part of the ownership work. |
 | [#385: reversed characters](https://github.com/not-fl3/macroquad/issues/385) | Current input queues use `push_back`/`pop_front`, preserving FIFO order. No patch. |
-| [#277: mouse release outside canvas](https://github.com/not-fl3/macroquad/issues/277) | Not solved by this batch. The canvas-only event pattern merits attention if mouse gameplay is added; no current Zubspace gameplay mouse usage establishes a need to import a new event policy. Keep existing keyboard/focus recovery acceptance. |
+| [#277: mouse release outside canvas](https://github.com/not-fl3/macroquad/issues/277) | Implemented for the current fork. The fork now forwards one owned outside-canvas window release, deduplicates terminals/blur and preserves canvas-relative/pointer-lock coordinates. Trusted Chrome/Firefox fixtures reproduce failure before the fix and pass afterward. This corrects library input independently of game mouse usage; native-contextmenu handling remains deferred with documented evidence limits. |
 | [#787: canvas-only resize](https://github.com/not-fl3/macroquad/issues/787) | Defer a `ResizeObserver` change: Zubspace uses a viewport-filling canvas. Validate window resize/DPI/focus in browser acceptance; embedded-layout behavior needs its own requirement/reproduction. |
 | [#533: old Safari OGG decoding](https://github.com/not-fl3/macroquad/issues/533) | The report concerns Safari 16.1 and an OGG asset; it does not justify a codec workaround for Zubspace's `.wa2` sound path. Retain real loading/playback and decode-failure checks; do not treat old browser support comments as present compatibility evidence. |
 | [#749: refresh-dependent simulation speed](https://github.com/not-fl3/macroquad/issues/749) | Keep Zubspace's existing fixed-step/high-refresh acceptance. No engine sleep/FPS-limiter patch, especially on the browser event loop. |

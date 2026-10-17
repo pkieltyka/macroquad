@@ -30,8 +30,11 @@ add release blockers without evidence of a current defect.
   an improvement from this release. The [generated scene](browser-scene.md) adds
   repeated matched CPU/cadence diagnostics and pixel correctness in Linux-hosted
   Chrome/Firefox WebGL1/2; it does not complete physical-GPU or game qualification.
-- [ ] Evaluate Miniquad #602 for relevant browser correctness using refreshed
-  source/discussion and a concrete regression before adopting a change.
+- [x] Adapt the owned-window listener idea from Miniquad #602 (TheRedDeveloper,
+  head`876e2fb92fa5339071dbaf5d3ef40df4f8901bb7`, open/unmerged at 2026-10-17 review).
+  Trusted outside-release and labelled synthetic touch recovery regressions pass;
+  unrelated/duplicate releases are ignored. Native-contextmenu handling remains
+  deferred; this does not establish physical-touch/cross-OS qualification.
 - [ ] Keep native platform work focused on maintenance and development/test needs.
   Expansion to native Windows/macOS or other backends is not a current product
   priority; existing native source is retained.
@@ -41,7 +44,8 @@ current-game label/culling opportunities from generic capacity/input fixes and
 conditional startup/atlas experiments. Its retained submission counts do not
 predict unchanged game rendering or renew application acceptance.
 
-No candidate patch is adopted by this roadmap. Any future runtime/backend change
+The checked item records separately reviewed implementation; pending candidates
+are not adopted by this roadmap. Any future runtime/backend change
 needs its own source review, Rust/JavaScript pairing, focused regressions and
 appropriate browser acceptance. See [current support and migration](fork.md),
 [security limits](security.md) and [historical patch/evidence ledger](patch-ledger.md).

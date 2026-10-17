@@ -5,12 +5,18 @@ WebGL1/2. Chrome and Firefox are the primary browser targets across modern
 operating systems: Windows, macOS, Linux and other OS environments providing
 the required WebAssembly, WebGL and browser audio capabilities. Native Linux is
 a secondary development/test path. The fork retains a narrower API and native
-platform matrix than upstream. The GitHub-only package is Macroquad 0.5.0, based on
+platform matrix than upstream. The GitHub-only package is prepared Macroquad 0.5.1 (not published), based on
 upstream Macroquad 0.4.16 with vendored Miniquad 0.4.11. Pin the full release
 Git revision and paired JavaScript, rather than a registry version. Rust 1.88 is
 the declared minimum, including the image 0.25.10 dependency. See
 [security contracts](security.md), [patch attribution](patch-ledger.md),
 [dependency decisions](dependency-audit.md) and [backend boundaries](backend-boundaries.md).
+
+The [0.5.1 migration notes](releases/zubspace-v0.5.1.md) cover antialias requests,
+atomic debug/release capacity policy, private default-shape chunking, queued setter
+flushes, UI minimum 3/3 and owned mouse/touch termination. The historical 0.5.0
+release and its assets remain unchanged. Pin paired Rust/JS together; version or
+compiler compatibility alone does not establish runtime pairing.
 
 ## Supported configurations
 

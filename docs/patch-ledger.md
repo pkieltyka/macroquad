@@ -6,7 +6,28 @@ are called out separately. Use `git log --follow -- <path>` to find the local
 integration commit. Recheck the ledger when updating upstream and drop patches
 that have landed there.
 
-## Configured WebGL antialias request for planned 0.5.1
+## Owned browser termination for prepared 0.5.1
+
+[Miniquad #602](https://github.com/not-fl3/miniquad/pull/602), by TheRedDeveloper,
+head `876e2fb92fa5339071dbaf5d3ef40df4f8901bb7`, was open/unmerged when reviewed
+on 2026-10-17. The fork adapts its owning-window mouseup listener idea; it does not
+copy the unconditional global-release policy. Only canvas-originated presses are
+owned, outside coordinates stay canvas-relative, duplicate/unrelated terminals
+are ignored, and blur/hidden releases precede focus notification. Pointer-lock
+coordinates and raw motion remain intact.
+
+Local additions preserve physical/simulated Left aggregation, legacy touch Ended
+semantics, cancellation and wake with simulation disabled. If a terminal is lost,
+a later authoritative touches list reconciles only canvas-owned IDs, using their
+last positions and synthetic Cancelled callbacks; unrelated contacts are never
+adopted. Recovery needs a later event. Real browser mouse actions and explicitly
+synthetic missing-touch/wake regressions are separate evidence; physical-device
+and native-menu visibility qualification remain absent. No contextmenu production
+handler or menu suppression is added. The source, generated bundle, generator
+anchors, provenance and complete reconstructible backend patch move together.
+See [migration](releases/zubspace-v0.5.1.md) and [input contract](../plans/0.5.1-browser-efficiency.md#input-batch-complete-owned-browser-input-termination).
+
+## Configured WebGL antialias request for prepared 0.5.1
 
 The previous browser initializer ignored `Conf.sample_count`, implicitly requesting
 browser-default antialiasing even for the default1. The paired v2 contract passes

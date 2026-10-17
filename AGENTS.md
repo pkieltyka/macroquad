@@ -71,7 +71,7 @@ Before publication, require the full local release evidence, green public CI on
 the exact reviewed commit (including supported/MSRV/Miri), and commit-bound asset
 checks. Keep Rust and the included reproducible JavaScript runtime paired. No
 Make target commits, pushes, tags, publishes crates/releases or deploys a game.
-See the [release notes](docs/releases/zubspace-v0.5.0.md) and
+See the [release notes](docs/releases/zubspace-v0.5.1.md) and
 [pairing instructions](docs/fork.md#pin-rust-and-javascript-together).
 
 Preserve upstream notices, verified vendoring and the complete local patch.

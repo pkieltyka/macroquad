@@ -11,7 +11,7 @@
   "bundleSha256": "ceb016d96bec8b2da6172f13902c71bc2ca8065fa250964a123706a5f4cb15fc",
   "rustPackages": {
     "macroquad": {
-      "version": "0.5.0",
+      "version": "0.5.1",
       "source": null
     },
     "miniquad": {
@@ -48,7 +48,8 @@
     "audio-decode-promise-settlement",
     "webgl2-preferred-context-selection",
     "owned-browser-mouse-termination",
-    "configured-webgl-antialias-request"
+    "configured-webgl-antialias-request",
+    "owned-touch-missing-terminal-reconciliation"
   ],
   "extensions": {
     "zubspace_audio_source_state": {
@@ -78,7 +79,7 @@
   },
   "pairing": {
     "repository": "https://github.com/pkieltyka/macroquad",
-    "tag": "zubspace-v0.5.0",
+    "tag": "zubspace-v0.5.1",
     "sourcePolicy": "macroquad and vendored miniquad come from the same Git revision; concrete release commit is recorded in release-manifest.json, not this source template"
   }
 }

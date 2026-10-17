@@ -17,9 +17,11 @@ smoke, alongside shared Rust correctness checks. Comprehensive browser/audio and
 visual timing checks run locally between releases. Use `make build`, `make test-ci`,
 `make test` or `make release-check`; [AGENTS.md](AGENTS.md) describes prerequisites,
 coverage and evidence.
-Release **0.5.0** is distributed through [GitHub releases](https://github.com/pkieltyka/macroquad/releases/tag/zubspace-v0.5.0),
-with its matching fork-owned JavaScript runtime included in this source tree and
-as a release asset. Consumers do not need private Zubspace runtime files.
+This tree prepares **0.5.1**, with its matching fork-owned JavaScript runtime;
+[prepared notes and migration](docs/releases/zubspace-v0.5.1.md) describe the changes.
+It has not been published. The historical [0.5.0 release](https://github.com/pkieltyka/macroquad/releases/tag/zubspace-v0.5.0)
+and its runtime asset remain immutable and differ from this tree. Consumers need
+no private Zubspace runtime files.
 The upstream Rust/runtime base is 0.4.16; the patched vendored Miniquad is 0.4.11.
 This GitHub-only fork retains the package name `macroquad` and disables crates.io
 publication. Pin the full release commit from `release-manifest.json`:
@@ -27,7 +29,8 @@ publication. Pin the full release commit from `release-manifest.json`:
 The fork deliberately removes scene/storage/tween and raw backend APIs and uses
 scoped UI access. It is not a drop-in replacement across upstream platforms.
 Local remediation and regression evidence do not establish an official RustSec
-patched release, a clean dependency audit, or a measured performance improvement.
+patched release, a clean dependency audit, or a whole-frame/game FPS improvement. Qualified generated-scene CPU API
+measurements are recorded in the prepared notes.
 Automatic selection chooses capabilities, not a measured best-FPS configuration.
 
 - [Supported APIs, build matrix, updates and rollback](docs/fork.md)

@@ -1,16 +1,17 @@
 # Paired browser runtime
 
 `mq_js_bundle.js` is the included, fork-owned runtime paired with this fork's
-current development source for HTML5/WASM/WebGL games. Release-template
-version fields remain**0.5.0** pending release preparation; current input/antialias changes
-belong to planned0.5.1 and do not replace the immutable0.5.0 release asset. It requires no private Zubspace files.
+prepared **0.5.1** source for HTML5/WASM/WebGL games. This candidate is not
+published and does not replace the immutable 0.5.0 release asset. It requires no
+private Zubspace files.
 It is generated from the published upstream **0.4.16** aggregate plus the
 reviewed local fixes, including `audio_source_state` extension v1. Miniquad's
 Rust dependency remains the locally patched **0.4.11** source.
-The initializer and owned-mouse helper are taken from `vendor/miniquad/js/gl.js`, with an additive
+The initializer and owned mouse/touch helpers are taken from `vendor/miniquad/js/gl.js`, with an additive
 `webgl_selection_version` extension v2. Auto (mode 0) tries WebGL2 then WebGL1
-only on context-creation failure; explicit modes 1/2 are strict. Old runtime
-bundles without extension v2 are rejected before context creation.
+only on context-creation failure; explicit modes 1/2 are strict. Current Rust rejects runtime bundles without extension v2 before context creation.
+Already compiled 0.5.0 WASM has its own earlier v1 guard; use the offline checker
+to diagnose that reverse pairing before startup.
 `sample_count <= 1` disables drawing-buffer antialiasing; larger values request
 it with browser-selected technique/sample count. Alpha/composition remains unchanged.
 

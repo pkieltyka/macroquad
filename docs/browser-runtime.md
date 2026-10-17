@@ -1,11 +1,11 @@
 # Browser runtime provenance
 
-The current development source pairs Rust with `js/mq_js_bundle.js`, SHA-256
-`b2d7cca117a9187a37368b66dc0f2eb426e3d1d3bd66d7f51aaf12c9362d0c65`
-(41,826 bytes). It includes owned browser mouse termination and the checked
-v2 antialias initializer for the planned0.5.1 work. Package/release-template version fields remain0.5.0 until
-the final release-preparation decision; this runtime is not the immutable0.5.0
-release asset and no new tag/publication is implied.
+The prepared **0.5.1** source pairs Rust with `js/mq_js_bundle.js`, SHA-256
+`ceb016d96bec8b2da6172f13902c71bc2ca8065fa250964a123706a5f4cb15fc`
+(43,182 bytes). It includes owned browser mouse termination, missing-touch
+reconciliation and the checked v2 antialias initializer. This candidate has not
+been published; the immutable 0.5.0 release/runtime and historical game acceptance
+remain separate. See [prepared migration notes](releases/zubspace-v0.5.1.md).
 
 The prior development runtime used extension v1, SHA256
 `55aaa3fc74b1b46294077c387e9d612e94a81b8cb9b9b0059f34c33ad78fe05d`
@@ -41,7 +41,7 @@ strict-mode startup exception), a terminal newline and the audio state extension
 The base retains upstream's combined document focus/visibility detection, with
 owned mouse releases inserted before a deduplicated focus-loss notification.
 
-The context initializer and owned-mouse helper are copied deterministically from the patched vendored
+The context initializer and owned mouse/touch helpers are copied deterministically from the patched vendored
 `vendor/miniquad/js/gl.js`; its full input hash is recorded in provenance and
 the runtime asset includes that source and Miniquad's original license files.
 Auto requests WebGL2 first and falls back to WebGL1 only when creation returns
@@ -55,7 +55,13 @@ for every explicit/Auto/fallback attempt. WebGL only exposes an antialias
 Boolean request; the actual technique/sample count is browser-selected and may
 be unavailable. Alpha and other context defaults remain unchanged. Current
 Rust rejects extension v1 with an explicit diagnostic before context/GPU work;
-the offline pairing checker also rejects a version mismatch.
+the offline pairing checker additionally requires the exact typed initializer
+`env.init_webgl(i32,i32)->void`. Already compiled 0.5.0 WASM checks extension 1
+before its initializer and traps in that old guard with this v2 runtime; the new
+initializer cannot add a diagnostic before that guard. The offline checker gives
+actionable stale-signature rejection without calling main. Labelled browser v1
+negatives instead pair current WASM with a v1 guard override, testing the reverse
+direction. Runtime extension versions are separate from Rust 1.88+ requirements.
 Miniquad ABI2 and existing plugin/audio ABI1 remain intact;
 the strict import gate rejects the old bundle before fallback stubs can hide
 the missing extension. This does not claim faster frames or context restoration.
@@ -64,8 +70,12 @@ Owned mouse handling adapts [Miniquad #602](https://github.com/not-fl3/miniquad/
 (TheRedDeveloper, head`876e2fb92fa5339071dbaf5d3ef40df4f8901bb7`, open/unmerged
 when refreshed2026-10-17). Only canvas-originated buttons receive a window release;
 unrelated/duplicate DOM releases are ignored, including after blur cleanup.
-Keyboard/touch/clipboard JavaScript remains the base implementation. Macroquad
-handles terminal touch cancellation and physical/simulated source aggregation;
+Keyboard/clipboard JavaScript retains the base implementation. Owned touch IDs
+and their last positions are mirrored only after canvas Started events. A later
+authoritative touches list cancels missing owned IDs after explicit changes,
+without adopting unrelated contacts or detecting missing events immediately.
+Blur discards that mirror before Rust focus cleanup. Macroquad retains terminal
+touch cancellation, legacy Ended behavior and physical/simulated source aggregation;
 [the input contract](../plans/0.5.1-browser-efficiency.md#input-batch-complete-owned-browser-input-termination)
 documents legacy multitouch Ended behavior, toggles and blocking-loop wake.
 No new import, public API or ABI extension is introduced. The existing release

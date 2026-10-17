@@ -6,6 +6,13 @@ upstream; an open issue is not proof that the exact code here still has its
 original defect. This is a finite Zubspace shortlist, not a claim to resolve
 all upstream reports.
 
+The [second-pass 0.5.1 plan](../plans/0.5.1-browser-efficiency.md), reviewed
+2026-10-17 against fork `d6d021e` and game `a03df5b`, refreshes the selected
+camera/metadata and candidate-PR facts. It promotes a separate app label/culling
+follow-up, keeps generic capacity/input correctness distinct from game speed,
+and makes atlas-growth work conditional. The decisions and historical evidence
+below retain their original review scope.
+
 ## Confirmed texture-binding cache defect
 
 [Macroquad #1006](https://github.com/not-fl3/macroquad/issues/1006) reports black

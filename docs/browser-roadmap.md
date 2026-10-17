@@ -36,6 +36,11 @@ add release blockers without evidence of a current defect.
   Expansion to native Windows/macOS or other backends is not a current product
   priority; existing native source is retained.
 
+The [0.5.1 efficiency plan](../plans/0.5.1-browser-efficiency.md) separates
+current-game label/culling opportunities from generic capacity/input fixes and
+conditional startup/atlas experiments. Its retained submission counts do not
+predict unchanged game rendering or renew application acceptance.
+
 No candidate patch is adopted by this roadmap. Any future runtime/backend change
 needs its own source review, Rust/JavaScript pairing, focused regressions and
 appropriate browser acceptance. See [current support and migration](fork.md),

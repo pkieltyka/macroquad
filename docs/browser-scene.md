@@ -102,5 +102,5 @@ pixel witnesses and whole-frame equality still required. Counts report WebGL
 calls, not driver stalls, GPU durations, actual framebuffer transitions or
 startup/retained capacity. The scene uses the default framebuffer and warmed
 textures: it does not establish offscreen/MSAA or atlas-growth performance.
-See the [0.5.1 analysis and scope](../plan.md) for the recorded baseline and
-separate proposed experiments.
+See the [0.5.1 analysis and scope](../plans/0.5.1-browser-efficiency.md) for the
+recorded baseline and separate proposed experiments.

@@ -17,7 +17,16 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt
           rustup target add --toolchain stable wasm32-unknown-unknown
-      - run: cargo +stable fmt --all -- --check
+      - name: Format fork code and patched backend files
+        run: |
+          for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml; do
+            cargo +stable fmt --manifest-path "$manifest" -- --check
+          done
+          rustfmt +stable --edition 2018 --check vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs
+      - name: Verify the published backend source and narrow patch
+        run: python3 tools/vendor_miniquad.py
+      - name: Check deleted-texture cache invariants
+        run: CARGO_TARGET_DIR=target/miniquad-tests cargo +stable test --manifest-path vendor/miniquad/Cargo.toml --locked --lib texture_deletion_tests
       - run: cargo +stable check --all-targets --no-default-features
       - run: cargo +stable check --all-targets --features audio
       - run: cargo +stable check --all-targets --target wasm32-unknown-unknown --features audio
@@ -25,6 +34,7 @@ jobs:
       - run: xvfb-run -a cargo +stable test --doc --no-default-features
       - name: Validate RGBA transfers and UI shader lifecycle on native GL
         run: |
+          xvfb-run -a env CARGO_TARGET_DIR=target/texture-cache-native cargo +stable run --manifest-path tests/texture_cache/Cargo.toml
           xvfb-run -a cargo +stable run --example image_transfer_regression --no-default-features
           xvfb-run -a cargo +stable test --lib ui_material_is_lazy_and_reused_after_empty_frames -- --ignored
       - name: Record resolved native and browser dependencies

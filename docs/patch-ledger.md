@@ -46,6 +46,23 @@ phone timings are not measurements of this fork. Native and browser regression
 results are recorded in the working punchlist; release Zubspace acceptance
 belongs to the pinned-fork integration checkpoint.
 
+## Deleted-texture binding cache
+
+Vendor the published Miniquad 0.4.11 source and adapt
+[Miniquad #691](https://github.com/not-fl3/miniquad/pull/691), commit
+`fbc59729b24dd6c3c4052a729431fa54ffe42b0d` by ricande
+`<ricande@gmail.com>`. The PR was open/unmerged on 2026-10-16. Deleting a GL
+texture now invalidates matching current/saved bindings without rebinding
+unrelated textures. Local additions are cache-state regressions and a finite
+native/WebGL1/WebGL2 deletion/live-update/churn fixture.
+
+The direct path dependency retains version `=0.4.11` for git consumers. The
+published artifact/hash, original licenses, complete narrow patch, and
+reconstruction check are in [vendor/README.md](../vendor/README.md).
+[Upstream issue decisions](upstream-issues.md) connect this defect to #1006 and
+Zubspace arena/LVZ texture lifetimes and record separate camera/metadata/memory
+measurement work. No camera or atlas optimization is included.
+
 ## Reviewed deferrals and rejections
 
 All candidates below were open and unmerged on 2026-10-16. Their diffs,
@@ -55,9 +72,9 @@ heads remain current later.
 | PR and reviewed head | Decision and concrete reason |
 | --- | --- |
 | [#973](https://github.com/not-fl3/macroquad/pull/973), `0e97981f8418c08f04f316e2b7e0c7dbe8c7ef42` | Defer import to the ownership batch. Isolating audio is useful, but its closures can borrow-panic on reentry; initialization, final-handle drop, cross-thread ownership, and asynchronous loads must fit the whole ownership design. The author confirms the wider context work was unfinished in the May 2026 discussion. |
-| [#1075](https://github.com/not-fl3/macroquad/pull/1075), `2d29112684ce7984e47b0c6096ed6d762d89ef96` | Defer. Partial changed-row uploads and pre-caching a string may help loading-screen text, but gameplay uses `src/font.rs` bitmap rendering. No measured Zubspace glyph-upload bottleneck yet. Revisit alongside atlas safety after a release-browser profile. |
-| [#1076](https://github.com/not-fl3/macroquad/pull/1076), `856a67bdc86468c39e689416114400ab9d89c756` | Defer. Row copying/growth optimization changes atlas and `Image::sub_image` bounds; first finish checked image invariants. Gameplay bitmap text does not establish a need for font-atlas growth optimization. |
-| [#1078](https://github.com/not-fl3/macroquad/pull/1078), `c09450ff3f94162d8ca6954b40f42d85aad7f0eb` | Defer with the atlas group. Edge padding changes glyph packing, growth, and filtering. No Zubspace artifact reproduction at supported DPI scales; validate loading-screen text and the combined atlas patches before import. |
+| [#1075](https://github.com/not-fl3/macroquad/pull/1075), `2d29112684ce7984e47b0c6096ed6d762d89ef96` | Defer. Browser loading progress is HTML (`src/assets/load/progress.rs`, WASM branch), and gameplay uses bitmap sprites. The native loader alone calls `draw_text`; no demonstrated browser atlas-upload benefit. |
+| [#1076](https://github.com/not-fl3/macroquad/pull/1076), `856a67bdc86468c39e689416114400ab9d89c756` | Defer. Browser loading progress is HTML and gameplay text is bitmap sprites, so neither establishes a need for font-atlas copying/growth optimization. Revisit only after a measured use case; image invariants are handled separately. |
+| [#1078](https://github.com/not-fl3/macroquad/pull/1078), `c09450ff3f94162d8ca6954b40f42d85aad7f0eb` | Defer with the atlas group. Edge padding changes glyph packing/growth/filtering. Browser loading progress is HTML and gameplay text is bitmap sprites; no applicable artifact reproduction justifies this change today. |
 | [#1067](https://github.com/not-fl3/macroquad/pull/1067), `ac0742908ad68b4a26e49b7ea215f178591e4ae6` | Defer. No Zubspace wheel-input usage. The paired [Miniquad #661](https://github.com/not-fl3/miniquad/pull/661), head `5df44b12602401bcb0f166e6c8f44a6ec0fd85e6`, also remains open and changes scrolling units/directions; take a tested pair when needed. |
 | [#1072](https://github.com/not-fl3/macroquad/pull/1072), `816aece995a9b3f44943c32fd1c0fc0236eff92b` | Reject for this fork's current scope. Raising the pipeline cap from 32 to 128 serves games with many custom materials; Zubspace has none. Lazy UI already avoids one unused slot. |
 | [#1077](https://github.com/not-fl3/macroquad/pull/1077), `175ec99b196c565385f9ffa3c6da41a042ac123f` | Defer. Zubspace does not load custom TTF fonts; removing their preload does not address its gameplay bitmap renderer. Default UI fonts already begin without that preload. |

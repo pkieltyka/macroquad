@@ -1,0 +1,15 @@
+[package]
+name = "texture-cache-regression"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+miniquad = { version = "=0.4.11", path = "../../vendor/miniquad", features = ["log-impl"] }
+
+[features]
+webgl2 = []
+
+[[bin]]
+name = "texture-cache-regression"
+path = "regression.rs"

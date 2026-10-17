@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<canvas id="glcanvas" width="64" height="64" tabindex="1"></canvas>
+<script>
+window.evidence = { messages: [], errors: [], staleBindings: 0, version: null, completed: false };
+for (const level of ["log", "info", "warn", "error"]) {
+    const original = console[level];
+    console[level] = (...args) => {
+        const message = args.join(" ");
+        evidence.messages.push(message);
+        if (level === "error" && !message.includes("already deleted texture ID")) evidence.errors.push(message);
+        if (message.includes("Texture cache regression passed:")) evidence.completed = true;
+        original.apply(console, args);
+    };
+}
+window.onerror = message => evidence.errors.push(String(message));
+window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
+</script>
+<script src="/vendor/miniquad/js/gl.js"></script>
+<script>
+// glGetError is intentionally implemented, rather than accepting the loader's stub.
+importObject.env.glGetError = () => gl.getError();
+const originalBind = importObject.env.glBindTexture;
+importObject.env.glBindTexture = (target, id) => {
+    if (id !== 0 && GL.textures[id] === null) evidence.staleBindings++;
+    originalBind(target, id);
+};
+const originalInit = importObject.env.init_webgl;
+importObject.env.init_webgl = version => {
+    originalInit(version);
+    evidence.version = gl instanceof WebGL2RenderingContext ? 2 : 1;
+    evidence.renderer = gl.getParameter(gl.RENDERER);
+};
+// Missing imports make this fixture fail; permissive fallback stubs cannot pass it.
+add_missing_functions_stabs = module => {
+    const missing = WebAssembly.Module.imports(module).filter(item =>
+        !(item.name in (importObject[item.module] || {})));
+    if (missing.length) throw new Error(`Missing imports: ${JSON.stringify(missing)}`);
+};
+load(new URLSearchParams(location.search).get("wasm"));
+</script>

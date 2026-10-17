@@ -1,0 +1,151 @@
+--- a/src/graphics/gl.rs
++++ b/src/graphics/gl.rs
+@@ -911,12 +911,11 @@
+     }
+ 
+     fn delete_texture(&mut self, texture: TextureId) {
+-        //self.cache.clear_texture_bindings();
+-
+         let t = self.textures.get(texture);
+         match &t.raw {
+             TextureOrRenderbuffer::Texture(raw) => unsafe {
+                 glDeleteTextures(1, raw as *const _);
++                self.cache.forget_texture(*raw);
+             },
+             TextureOrRenderbuffer::Renderbuffer(raw) => unsafe {
+                 glDeleteRenderbuffers(1, raw as *const _);
+--- a/src/graphics/gl/cache.rs
++++ b/src/graphics/gl/cache.rs
+@@ -116,6 +116,25 @@
+         self.index_buffer = 0;
+     }
+ 
++    /// Forgets `texture` wherever the cache records it as bound. Deleting a
++    /// texture already rebinds those units to 0 in GL, so no GL call is
++    /// needed; but if the cache kept the name, a texture created later with
++    /// the same name would be taken as already bound and never be bound.
++    pub fn forget_texture(&mut self, texture: GLuint) {
++        for cached in &mut self.textures {
++            if cached.texture == texture {
++                *cached = CachedTexture {
++                    target: 0,
++                    texture: 0,
++                };
++            }
++        }
++        if self.stored_texture == texture {
++            self.stored_target = 0;
++            self.stored_texture = 0;
++        }
++    }
++
+     pub fn clear_texture_bindings(&mut self) {
+         for ix in 0..MAX_SHADERSTAGE_IMAGES {
+             if self.textures[ix].texture != 0 {
+@@ -139,3 +158,106 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod texture_deletion_tests {
++    use super::*;
++
++    // No GL entry points are initialized: forgetting a texture must work
++    // without rebinding or disturbing any other texture's actual GL state.
++    fn cache() -> GlCache {
++        GlCache {
++            stored_index_buffer: 7,
++            stored_index_type: Some(GL_UNSIGNED_SHORT),
++            stored_vertex_buffer: 8,
++            stored_target: GL_TEXTURE_2D,
++            stored_texture: 11,
++            index_buffer: 7,
++            index_type: Some(GL_UNSIGNED_SHORT),
++            vertex_buffer: 8,
++            textures: [CachedTexture {
++                target: 0,
++                texture: 0,
++            }; MAX_SHADERSTAGE_IMAGES],
++            cur_pipeline: None,
++            cur_pass: None,
++            color_blend: None,
++            alpha_blend: None,
++            stencil: None,
++            color_write: (true, true, true, true),
++            cull_face: CullFace::Nothing,
++            attributes: [None; MAX_VERTEX_ATTRIBUTES],
++        }
++    }
++
++    #[test]
++    fn deleting_texture_forgets_all_current_and_saved_bindings() {
++        let mut cache = cache();
++        cache.textures[0] = CachedTexture {
++            target: GL_TEXTURE_2D,
++            texture: 11,
++        };
++        cache.textures[3] = CachedTexture {
++            target: GL_TEXTURE_2D,
++            texture: 11,
++        };
++        cache.textures[5] = CachedTexture {
++            target: GL_TEXTURE_CUBE_MAP,
++            texture: 22,
++        };
++        cache.forget_texture(11);
++        for slot in [0, 3] {
++            assert_eq!(
++                (cache.textures[slot].target, cache.textures[slot].texture),
++                (0, 0)
++            );
++        }
++        assert_eq!((cache.stored_target, cache.stored_texture), (0, 0));
++        assert_eq!(
++            (cache.textures[5].target, cache.textures[5].texture),
++            (GL_TEXTURE_CUBE_MAP, 22)
++        );
++        assert_eq!((cache.index_buffer, cache.vertex_buffer), (7, 8));
++        assert_eq!(
++            (cache.stored_index_buffer, cache.stored_vertex_buffer),
++            (7, 8)
++        );
++        // Repeated deletion and names absent from the cache are harmless.
++        cache.forget_texture(11);
++        cache.forget_texture(99);
++        assert_eq!(cache.textures[5].texture, 22);
++    }
++
++    #[test]
++    fn deleting_saved_texture_preserves_other_current_binding() {
++        let mut cache = cache();
++        cache.textures[0] = CachedTexture {
++            target: GL_TEXTURE_CUBE_MAP,
++            texture: 22,
++        };
++        cache.forget_texture(11);
++        assert_eq!((cache.stored_target, cache.stored_texture), (0, 0));
++        assert_eq!(
++            (cache.textures[0].target, cache.textures[0].texture),
++            (GL_TEXTURE_CUBE_MAP, 22)
++        );
++    }
++
++    #[test]
++    fn deleting_current_texture_preserves_other_saved_binding() {
++        let mut cache = cache();
++        cache.textures[0] = CachedTexture {
++            target: GL_TEXTURE_2D,
++            texture: 22,
++        };
++        cache.forget_texture(22);
++        assert_eq!(
++            (cache.textures[0].target, cache.textures[0].texture),
++            (0, 0)
++        );
++        assert_eq!(
++            (cache.stored_target, cache.stored_texture),
++            (GL_TEXTURE_2D, 11)
++        );
++    }
++}

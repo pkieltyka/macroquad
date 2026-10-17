@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Build/run finite WebGL1/2 texture deletion tests with Chrome and Firefox.
+
+Requires Rust's wasm32 target, Chrome/chromedriver, Firefox/geckodriver, and a
+working Firefox graphics display (Xvfb is sufficient). --expect-stale checks
+that an unpatched source build actually reproduces the cache failure.
+"""
+import argparse
+import contextlib
+import functools
+import http.server
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import threading
+import time
+import urllib.parse
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def request(port, method, path, data=None):
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=None if data is None else json.dumps(data).encode(), method=method,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        value = json.load(response)["value"]
+    if isinstance(value, dict) and value.get("error"):
+        raise RuntimeError(value)
+    return value
+
+
+def build(output):
+    env = os.environ.copy()
+    env["CARGO_TARGET_DIR"] = str(ROOT / "target" / "texture-cache-build")
+    flags = env.get("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS", "")
+    env["CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS"] = flags + " -C link-arg=--allow-undefined"
+    command = ["cargo", "build", "--manifest-path", str(ROOT / "tests/texture_cache/Cargo.toml"), "--target", "wasm32-unknown-unknown"]
+    for version in (1, 2):
+        subprocess.run(command + ([] if version == 1 else ["--features", "webgl2"]), env=env, cwd=ROOT, check=True)
+        source = Path(env["CARGO_TARGET_DIR"]) / "wasm32-unknown-unknown/debug/texture-cache-regression.wasm"
+        shutil.copyfile(source, output / f"webgl{version}.wasm")
+
+
+def check(browser, base_url, output, expected_stale):
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    if browser == "chrome":
+        options = {"browserName": "chrome", "goog:chromeOptions": {
+            "binary": os.environ.get("CHROME_BIN") or shutil.which("google-chrome") or shutil.which("chromium"),
+            "args": ["--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+        }}
+        command = [os.environ.get("CHROMEDRIVER_BIN", "chromedriver"), f"--port={port}"]
+    else:
+        options = {"browserName": "firefox", "moz:firefoxOptions": {
+            "binary": os.environ.get("FIREFOX_BIN") or shutil.which("firefox"),
+            "env": {"MOZ_ENABLE_WAYLAND": "0", "GDK_BACKEND": "x11"},
+            "prefs": {"webgl.force-enabled": True},
+        }}
+        command = [os.environ.get("GECKODRIVER_BIN", "geckodriver"), "--port", str(port)]
+    session = None
+    with (output / f"{browser}-driver.log").open("w") as log:
+        driver = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 15
+            while True:
+                try:
+                    request(port, "GET", "/status")
+                    break
+                except OSError:
+                    if driver.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError(f"{browser} driver did not start; see {log.name}")
+                    time.sleep(0.1)
+            session = request(port, "POST", "/session", {"capabilities": {"alwaysMatch": options}})["sessionId"]
+            for version in (1, 2):
+                wasm = "/" + (output / f"webgl{version}.wasm").relative_to(ROOT).as_posix()
+                url = base_url + "/tests/texture_cache/case.html?" + urllib.parse.urlencode({"wasm": wasm})
+                request(port, "POST", f"/session/{session}/url", {"url": url})
+                deadline = time.monotonic() + 30
+                while True:
+                    evidence = request(port, "POST", f"/session/{session}/execute/sync", {"script": "return window.evidence", "args": []})
+                    if evidence and (evidence["errors"] or evidence["completed"]):
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f"WebGL{version} timed out: {evidence}")
+                    time.sleep(0.1)
+                (output / f"{browser}-webgl{version}.json").write_text(json.dumps(evidence, indent=2) + "\n")
+                if evidence["errors"] or not evidence["completed"] or evidence["version"] != version:
+                    raise AssertionError(evidence)
+                if bool(evidence["staleBindings"]) != expected_stale:
+                    raise AssertionError(evidence)
+                print(f"{browser} WebGL{version}: correct pixels, GL error 0, stale binds {evidence['staleBindings']}", flush=True)
+        finally:
+            if session:
+                with contextlib.suppress(Exception):
+                    request(port, "DELETE", f"/session/{session}")
+            driver.terminate()
+            try:
+                driver.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                driver.kill()
+                driver.wait()
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--wasm-dir", default="target/texture-cache-web")
+    parser.add_argument("--no-build", action="store_true")
+    parser.add_argument("--expect-stale", action="store_true")
+    parser.add_argument("--browsers", nargs="+", choices=["chrome", "firefox"], default=["chrome", "firefox"])
+    args = parser.parse_args()
+    output = (ROOT / args.wasm_dir).resolve()
+    output.relative_to(ROOT)
+    output.mkdir(parents=True, exist_ok=True)
+    if not args.no_build:
+        build(output)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=str(ROOT)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for browser in args.browsers:
+            check(browser, f"http://127.0.0.1:{server.server_port}", output, args.expect_stale)
+    finally:
+        server.shutdown()
+        server.server_close()

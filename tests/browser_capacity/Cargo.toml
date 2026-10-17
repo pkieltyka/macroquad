@@ -1,0 +1,16 @@
+[package]
+name = "browser-capacity-regression"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+macroquad = { path = "../..", default-features = false }
+
+[features]
+webgl2 = []
+auto = []
+
+[[bin]]
+name = "browser-capacity-regression"
+path = "capacity.rs"

@@ -20,6 +20,14 @@ pub fn clear_background(color: Color) {
     crate::with_context(|context| context.gpu.with(|backend| context.gl.clear(backend, color)));
 }
 
+/// Change per-draw buffer capacities. Vertex capacity is limited to 65,535
+/// on WebGL2 (which reserves index 65,535 for primitive restart), otherwise 65,536;
+/// index capacity counts indices, independently of their u16 values.
+///
+/// # Panics
+/// Panics before changing buffers if geometry is queued or the index capacity
+/// exceeds backend buffer/draw limits. Call `set_default_camera()` to flush first,
+/// or call this at the beginning of a frame before drawing.
 #[doc(hidden)]
 pub fn gl_set_drawcall_buffer_capacity(max_vertices: usize, max_indices: usize) {
     crate::with_context(|context| {

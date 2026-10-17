@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>html,body {margin:0} canvas {width:64px;height:64px;display:block}</style>
+<canvas id="glcanvas" width="64" height="64" tabindex="1"></canvas>
+<script>
+window.evidence = {messages:[], errors:[], phases:[], completed:false};
+if (new URLSearchParams(location.search).get("block2") === "1") {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(name, ...args) {
+        return name === "webgl2" ? null : getContext.call(this,name,...args);
+    };
+}
+const stores = new Map(), uploads = new Map();
+for (const proto of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+    const allocate = proto.bufferData, upload = proto.bufferSubData, remove = proto.deleteBuffer;
+    proto.bufferData = function(target, data, ...args) {
+        const binding = this.getParameter(target === this.ARRAY_BUFFER ? this.ARRAY_BUFFER_BINDING : this.ELEMENT_ARRAY_BUFFER_BINDING);
+        stores.set(binding, typeof data === "number" ? data : data.byteLength);
+        return allocate.call(this,target,data,...args);
+    };
+    proto.bufferSubData = function(target, offset, data, ...args) {
+        const binding = this.getParameter(target === this.ARRAY_BUFFER ? this.ARRAY_BUFFER_BINDING : this.ELEMENT_ARRAY_BUFFER_BINDING);
+        if (offset !== 0 || data.byteLength > stores.get(binding)) evidence.errors.push("Upload exceeds allocated buffer");
+        uploads.set(binding,new Uint8Array(data.buffer,data.byteOffset,data.byteLength).slice());
+        return upload.call(this,target,offset,data,...args);
+    };
+    proto.deleteBuffer = function(buffer) {
+        stores.delete(buffer); uploads.delete(buffer);
+        return remove.call(this,buffer);
+    };
+}
+let active, restore;
+function begin(name) {
+    if (active) throw new Error("Nested capacity phase");
+    evidence.context = {version:gl.getParameter(gl.VERSION), renderer:gl.getParameter(gl.RENDERER)};
+    active = {name, draws:[]};
+    const originals = new Map();
+    for (const method of ["drawElements", "drawElementsInstanced"]) {
+        const original = gl[method];
+        if (typeof original !== "function") continue;
+        originals.set(method, original);
+        gl[method] = function(mode,count,type,offset,instances=1) {
+            const vertices = uploads.get(gl.getParameter(gl.ARRAY_BUFFER_BINDING));
+            const indices = uploads.get(gl.getParameter(gl.ELEMENT_ARRAY_BUFFER_BINDING));
+            if (!vertices || !indices || type !== gl.UNSIGNED_SHORT || offset !== 0 || instances !== 1 || count * 2 !== indices.byteLength) throw new Error("Unexpected indexed upload/draw contract");
+            const values = new Uint16Array(indices.buffer,indices.byteOffset,count);
+            let maxIndex = 0;
+            for (const index of values) maxIndex = Math.max(maxIndex,index);
+            const vertexCount = vertices.byteLength / 40;
+            if (!Number.isInteger(vertexCount) || maxIndex >= vertexCount) throw new Error("Index exceeds uploaded vertex slice");
+            active.draws.push({mode,count,vertexCount,maxIndex,indexBytes:indices.byteLength,vertexBytes:vertices.byteLength});
+            return original.call(this,mode,count,type,offset,instances);
+        };
+    }
+    restore = () => { for (const [method, original] of originals) gl[method] = original; };
+}
+function end(name) {
+    if (!active || active.name !== name) throw new Error("Mismatched capacity phase");
+    restore();
+    const pixels = new Uint8Array(64 * 64 * 4);
+    gl.readPixels(0,0,64,64,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+    for (let y=0; y<64; y++) for (let x=0; x<64; x++) {
+        const covered = name === "lines" ? y === 32 && x < 48 : y < 16 && x < (name === "index-count" ? 16 : 48);
+        const expected = covered ? x < 16 ? [255,0,0,255] : x < 32 ? [0,255,0,255] : [0,0,255,255] : [0,0,0,255];
+        const at = ((63-y)*64+x)*4;
+        if (expected.some((v,i) => pixels[at+i] !== v)) throw new Error(`Pixel mismatch ${name} at ${x},${y}: ${pixels.slice(at,at+4)}`);
+    }
+    active.glError = gl.getError();
+    if (active.glError !== gl.NO_ERROR) throw new Error(`GL error ${active.glError}`);
+    active.completePixels = true;
+    evidence.phases.push(active);
+    active = null;
+}
+for (const level of ["log","info","warn","error"]) {
+    const original = console[level];
+    console[level] = (...args) => {
+        const value = args.join(" ");
+        evidence.messages.push(value);
+        original.apply(console,args);
+        try {
+            if (value.startsWith("CAPACITY_BEGIN ")) begin(value.split(" ")[1]);
+            if (value.startsWith("CAPACITY_END ")) end(value.split(" ")[1]);
+            if (value === "browser capacity regression: passed") evidence.completed = true;
+        } catch (error) { evidence.errors.push(String(error)); }
+    };
+}
+window.onerror = value => evidence.errors.push(String(value));
+window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
+</script>
+<script src="/js/mq_js_bundle.js"></script>
+<script>
+load(new URLSearchParams(location.search).get("wasm"));
+</script>

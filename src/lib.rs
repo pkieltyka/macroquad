@@ -1129,17 +1129,19 @@ pub mod conf {
         /// update_on will tell macroquad when to proceed with the event loop.
         pub update_on: Option<UpdateTrigger>,
         pub default_filter_mode: crate::FilterMode,
-        /// Macroquad performs automatic and static batching for each
-        /// draw_* call. For each draw call, it pre-allocate a huge cpu/gpu
-        /// buffer to add vertices to. When it exceeds the buffer, it allocates the
-        /// new one, marking the new draw call.
+        /// Maximum vertices per draw call. Adjacent compatible geometry batches
+        /// until either capacity is full. The effective limit is 65,535 on WebGL2
+        /// (index 65,535 is reserved for primitive restart), otherwise 65,536.
+        /// Larger configured values use that limit. Defaults to 10,000.
         ///
-        /// Some examples when altering those values migh be convinient:
-        /// - for huge 3d models that do not fit into a single draw call, increasing
-        ///     the buffer size might be easier than splitting the model.
-        /// - when each draw_* call got its own material,
-        ///     buffer size might be reduced to save some memory
+        /// Individual meshes must fit both capacities and have valid local indices;
+        /// oversized or invalid indexed geometry panics instead of being truncated.
+        /// Empty index slices do not submit geometry. Zero and small capacities are
+        /// allowed, but any indexed geometry must fit them.
         pub draw_call_vertex_capacity: usize,
+        /// Maximum number of indices per draw call, independently of u16 index
+        /// values. Defaults to 5,000. Must fit the backend's signed draw count and
+        /// buffer byte size; invalid capacities panic before creating GPU resources.
         pub draw_call_index_capacity: usize,
     }
 

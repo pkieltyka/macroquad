@@ -571,9 +571,33 @@ pub struct QuadGl {
     pub(crate) white_texture: miniquad::TextureId,
     max_vertices: usize,
     max_indices: usize,
+    vertex_limit: usize,
 
     batch_vertex_buffer: Vec<Vertex>,
     batch_index_buffer: Vec<u16>,
+}
+
+fn drawcall_vertex_limit(gl_version: &str) -> usize {
+    // WebGL2 reserves 0xffff for fixed primitive restart, even for triangles/lines.
+    // https://registry.khronos.org/webgl/specs/latest/2.0/#NO_PRIMITIVE_RESTART_FIXED_INDEX
+    if gl_version.starts_with("WebGL 2.") {
+        u16::MAX as usize
+    } else {
+        u16::MAX as usize + 1
+    }
+}
+
+// Index *count* has a separate GLsizei and byte-size limit from index values.
+fn drawcall_capacity(max_vertices: usize, max_indices: usize) -> (usize, usize) {
+    let max_vertices = max_vertices.min(u16::MAX as usize + 1);
+    assert!(
+        max_indices <= i32::MAX as usize
+            && max_indices
+                .checked_mul(std::mem::size_of::<u16>())
+                .is_some_and(|bytes| bytes <= isize::MAX as usize),
+        "draw call index capacity exceeds backend buffer or draw limits"
+    );
+    (max_vertices, max_indices)
 }
 
 impl QuadGl {
@@ -582,6 +606,9 @@ impl QuadGl {
         max_vertices: usize,
         max_indices: usize,
     ) -> QuadGl {
+        let (max_vertices, max_indices) = drawcall_capacity(max_vertices, max_indices);
+        let vertex_limit = drawcall_vertex_limit(&ctx.info().gl_version_string);
+        let max_vertices = max_vertices.min(vertex_limit);
         let white_texture = ctx.new_texture_from_rgba8(1, 1, &[255, 255, 255, 255]);
 
         QuadGl {
@@ -609,6 +636,7 @@ impl QuadGl {
             batch_index_buffer: Vec::with_capacity(max_indices),
             max_vertices,
             max_indices,
+            vertex_limit,
         }
     }
 
@@ -808,7 +836,11 @@ impl QuadGl {
                 pipeline.uniforms_data.as_ptr(),
                 pipeline.uniforms_data.len(),
             );
-            ctx.draw(0, dc.indices_count as i32, 1);
+            ctx.draw(
+                0,
+                i32::try_from(dc.indices_count).expect("validated index count must fit GLsizei"),
+                1,
+            );
             ctx.end_render_pass();
 
             if dc.capture {
@@ -931,12 +963,19 @@ impl QuadGl {
     }
 
     pub fn geometry(&mut self, vertices: &[Vertex], indices: &[u16]) {
-        if vertices.len() >= self.max_vertices || indices.len() >= self.max_indices {
-            warn!("geometry() exceeded max drawcall size, clamping");
+        if indices.is_empty() {
+            return;
         }
-
-        let vertices = &vertices[0..self.max_vertices.min(vertices.len())];
-        let indices = &indices[0..self.max_indices.min(indices.len())];
+        assert!(
+            vertices.len() <= self.max_vertices && indices.len() <= self.max_indices,
+            "geometry exceeds draw call capacity; submit smaller meshes or increase capacity"
+        );
+        assert!(
+            indices
+                .iter()
+                .all(|&index| usize::from(index) < vertices.len()),
+            "geometry index is outside its vertex slice"
+        );
 
         let pip = self.state.pipeline.unwrap_or(
             self.pipelines
@@ -958,8 +997,8 @@ impl QuadGl {
                 || draw_call.pipeline != pip
                 || draw_call.render_pass != self.state.render_pass
                 || draw_call.draw_mode != self.state.draw_mode
-                || draw_call.vertices_count >= self.max_vertices - vertices.len()
-                || draw_call.indices_count >= self.max_indices - indices.len()
+                || draw_call.vertices_count > self.max_vertices - vertices.len()
+                || draw_call.indices_count > self.max_indices - indices.len()
                 || draw_call.capture != self.state.capture
                 || self.state.break_batching
         }) {
@@ -990,6 +1029,7 @@ impl QuadGl {
             self.draw_calls[self.draw_calls_count].viewport = self.state.viewport;
             self.draw_calls[self.draw_calls_count].model = self.state.model();
             self.draw_calls[self.draw_calls_count].pipeline = pip;
+            self.draw_calls[self.draw_calls_count].draw_mode = self.state.draw_mode;
             self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass.clone();
             self.draw_calls[self.draw_calls_count].capture = self.state.capture;
             self.draw_calls[self.draw_calls_count].indices_start = self.batch_index_buffer.len();
@@ -1001,8 +1041,10 @@ impl QuadGl {
         let dc = &mut self.draw_calls[self.draw_calls_count - 1];
 
         self.batch_vertex_buffer.extend(vertices);
-        self.batch_index_buffer
-            .extend(indices.iter().map(|x| *x + dc.vertices_count as u16));
+        self.batch_index_buffer.extend(indices.iter().map(|&index| {
+            u16::try_from(usize::from(index) + dc.vertices_count)
+                .expect("validated draw call index must fit u16")
+        }));
 
         dc.vertices_count += vertices.len();
         dc.indices_count += indices.len();
@@ -1079,9 +1121,13 @@ impl QuadGl {
         max_vertices: usize,
         max_indices: usize,
     ) {
-        self.max_vertices = max_vertices;
+        let (max_vertices, max_indices) = drawcall_capacity(max_vertices, max_indices);
+        assert_eq!(
+            self.draw_calls_count, 0,
+            "cannot change draw call capacity with queued geometry; flush with set_default_camera or next_frame first"
+        );
+        self.max_vertices = max_vertices.min(self.vertex_limit);
         self.max_indices = max_indices;
-        self.draw_calls_count = 0;
 
         for draw_call in &mut self.draw_calls {
             draw_call.indices_start = 0;
@@ -1290,5 +1336,264 @@ mod uniform_tests {
             ])
             .is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod capacity_validation_tests {
+    use super::*;
+
+    #[test]
+    fn actual_webgl2_reserves_the_fixed_restart_index() {
+        assert_eq!(
+            drawcall_vertex_limit("WebGL 2.0 (OpenGL ES 3.0 Chromium)"),
+            65_535
+        );
+        assert_eq!(drawcall_vertex_limit("WebGL 2.0"), 65_535);
+        for version in ["WebGL 1.0 (OpenGL ES 2.0 Chromium)", "4.6 Mesa", ""] {
+            assert_eq!(drawcall_vertex_limit(version), 65_536);
+        }
+    }
+
+    #[test]
+    fn vertex_domain_and_index_count_have_independent_limits() {
+        assert_eq!(drawcall_capacity(0, 0), (0, 0));
+        assert_eq!(drawcall_capacity(1, 1), (1, 1));
+        assert_eq!(drawcall_capacity(usize::MAX, 70_000), (65_536, 70_000));
+        let max_indices = (i32::MAX as usize).min(isize::MAX as usize / 2);
+        assert_eq!(
+            drawcall_capacity(65_536, max_indices),
+            (65_536, max_indices)
+        );
+        assert!(std::panic::catch_unwind(|| drawcall_capacity(4, max_indices + 1)).is_err());
+        assert!(std::panic::catch_unwind(|| drawcall_capacity(4, usize::MAX)).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "draw call index capacity exceeds backend buffer or draw limits")]
+    fn invalid_capacity_is_rejected_before_backend_use() {
+        let mut backend = crate::test_backend::Recorder {
+            deleted: Default::default(),
+        };
+        QuadGl::new(&mut backend, 4, usize::MAX);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod capacity_tests {
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::{Arc, Mutex};
+
+    struct Finished;
+    impl miniquad::EventHandler for Finished {
+        fn update(&mut self) {}
+        fn draw(&mut self) {}
+    }
+
+    fn vertices(count: usize) -> Vec<Vertex> {
+        vec![Vertex::new(0., 0., 0., 0., 0., crate::color::WHITE); count]
+    }
+
+    fn case(
+        ctx: &mut dyn RenderingBackend,
+        failures: &mut Vec<&'static str>,
+        name: &'static str,
+        capacity: (usize, usize),
+        test: impl FnOnce(&mut QuadGl, &mut dyn RenderingBackend),
+    ) {
+        let mut gl = QuadGl::new(ctx, capacity.0, capacity.1);
+        if catch_unwind(AssertUnwindSafe(|| test(&mut gl, ctx))).is_err() {
+            failures.push(name);
+        }
+        gl.shutdown(ctx);
+    }
+
+    #[test]
+    fn capacity_regressions() {
+        let failures = Arc::new(Mutex::new(Vec::new()));
+        let output = failures.clone();
+        miniquad::start(
+            miniquad::conf::Conf {
+                window_title: "draw capacity regressions".into(),
+                window_width: 64,
+                window_height: 64,
+                ..Default::default()
+            },
+            move || {
+                let mut ctx = miniquad::window::new_rendering_backend();
+                let mut failures = output.lock().unwrap();
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "exact fit and one over",
+                    (8, 12),
+                    |gl, _| {
+                        for _ in 0..2 {
+                            gl.geometry(&vertices(4), &[0, 1, 2, 0, 2, 3]);
+                        }
+                        assert_eq!(gl.draw_calls_count, 1);
+                        assert_eq!(gl.batch_index_buffer, [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+                        gl.geometry(&vertices(4), &[0, 1, 2, 0, 2, 3]);
+                        assert_eq!(gl.draw_calls_count, 2);
+                        assert_eq!(gl.draw_calls[1].vertices_count, 4);
+                    },
+                );
+                case(&mut *ctx, &mut failures, "line fit", (4, 4), |gl, ctx| {
+                    gl.geometry(&vertices(3), &[0, 1, 2]);
+                    gl.draw(ctx, glam::Mat4::IDENTITY);
+                    gl.draw_mode(DrawMode::Lines);
+                    gl.geometry(&vertices(2), &[0, 1]);
+                    gl.geometry(&vertices(2), &[0, 1]);
+                    assert_eq!(gl.draw_calls_count, 1);
+                    assert_eq!(gl.batch_index_buffer, [0, 1, 2, 3]);
+                });
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "oversized is atomic",
+                    (4, 6),
+                    |gl, _| {
+                        gl.geometry(&vertices(3), &[0, 1, 2]);
+                        for (v, i) in [(vertices(5), vec![0, 1, 4]), (vertices(3), vec![0; 7])] {
+                            assert!(catch_unwind(AssertUnwindSafe(|| gl.geometry(&v, &i))).is_err());
+                            assert_eq!(
+                                (
+                                    gl.draw_calls_count,
+                                    gl.batch_vertex_buffer.len(),
+                                    gl.batch_index_buffer.len()
+                                ),
+                                (1, 3, 3)
+                            );
+                        }
+                    },
+                );
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "invalid local index is atomic",
+                    (8, 12),
+                    |gl, _| {
+                        gl.geometry(&vertices(3), &[0, 1, 2]);
+                        assert!(catch_unwind(AssertUnwindSafe(
+                            || gl.geometry(&vertices(3), &[0, 1, 3])
+                        ))
+                        .is_err());
+                        assert_eq!(
+                            (
+                                gl.draw_calls_count,
+                                gl.batch_vertex_buffer.len(),
+                                gl.batch_index_buffer.len()
+                            ),
+                            (1, 3, 3)
+                        );
+                    },
+                );
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "full u16 domain and rebase split",
+                    (100_000, 100_000),
+                    |gl, ctx| {
+                        gl.geometry(&vertices(65_532), &[0, 1, 65_531]);
+                        gl.geometry(&vertices(4), &[0, 1, 2, 0, 2, 3]);
+                        assert_eq!(gl.draw_calls_count, 1);
+                        assert_eq!(
+                            &gl.batch_index_buffer[3..],
+                            [65_532, 65_533, 65_534, 65_532, 65_534, 65_535]
+                        );
+                        gl.geometry(&vertices(3), &[0, 1, 2]);
+                        assert_eq!(gl.draw_calls_count, 2);
+                        assert_eq!(&gl.batch_index_buffer[9..], [0, 1, 2]);
+                        gl.draw(ctx, glam::Mat4::IDENTITY);
+                        for bindings in &gl.draw_calls_bindings {
+                            assert_eq!(
+                                ctx.buffer_size(bindings.vertex_buffers[0]),
+                                65_536 * std::mem::size_of::<Vertex>()
+                            );
+                        }
+                    },
+                );
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "index count exceeds u16 domain",
+                    (3, 70_000),
+                    |gl, ctx| {
+                        gl.geometry(&vertices(3), &vec![0; 69_999]);
+                        assert_eq!(gl.draw_calls[0].indices_count, 69_999);
+                        gl.draw(ctx, glam::Mat4::IDENTITY);
+                        assert_eq!(
+                            ctx.buffer_size(gl.draw_calls_bindings[0].index_buffer),
+                            140_000
+                        );
+                    },
+                );
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "zero empty and tiny capacities",
+                    (0, 0),
+                    |gl, ctx| {
+                        gl.geometry(&[], &[]);
+                        gl.geometry(&vertices(3), &[]);
+                        assert_eq!(gl.draw_calls_count, 0);
+                        assert!(catch_unwind(AssertUnwindSafe(|| gl.geometry(&[], &[0]))).is_err());
+                        gl.update_drawcall_capacity(ctx, 1, 1);
+                        gl.geometry(&vertices(1), &[0]);
+                        assert_eq!(gl.batch_index_buffer, [0]);
+                    },
+                );
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "queued setter is atomic and later succeeds",
+                    (8, 12),
+                    |gl, ctx| {
+                        gl.geometry(&vertices(3), &[0, 1, 2]);
+                        assert!(catch_unwind(AssertUnwindSafe(
+                            || gl.update_drawcall_capacity(ctx, 4, 6)
+                        ))
+                        .is_err());
+                        assert_eq!(
+                            (
+                                gl.max_vertices,
+                                gl.max_indices,
+                                gl.draw_calls_count,
+                                gl.batch_vertex_buffer.len()
+                            ),
+                            (8, 12, 1, 3)
+                        );
+                        gl.draw(ctx, glam::Mat4::IDENTITY);
+                        gl.update_drawcall_capacity(ctx, 4, 6);
+                        gl.geometry(&vertices(4), &[0, 1, 2, 0, 2, 3]);
+                        gl.draw(ctx, glam::Mat4::IDENTITY);
+                        assert_eq!(
+                            ctx.buffer_size(gl.draw_calls_bindings[0].vertex_buffers[0]),
+                            4 * std::mem::size_of::<Vertex>()
+                        );
+                    },
+                );
+                case(
+                    &mut *ctx,
+                    &mut failures,
+                    "unrepresentable index capacity is atomic",
+                    (4, 6),
+                    |gl, ctx| {
+                        for count in [i32::MAX as usize + 1, usize::MAX] {
+                            assert!(catch_unwind(AssertUnwindSafe(
+                                || gl.update_drawcall_capacity(ctx, 4, count)
+                            ))
+                            .is_err());
+                            assert_eq!((gl.max_vertices, gl.max_indices), (4, 6));
+                        }
+                    },
+                );
+                miniquad::window::quit();
+                Box::new(Finished)
+            },
+        );
+        let failures = failures.lock().unwrap();
+        assert!(failures.is_empty(), "failed capacity cases: {failures:?}");
     }
 }

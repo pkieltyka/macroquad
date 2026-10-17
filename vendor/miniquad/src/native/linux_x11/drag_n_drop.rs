@@ -21,18 +21,44 @@ pub struct X11DnD {
 
 impl super::X11Display {
     pub(super) unsafe fn init_drag_n_drop(&mut self) {
-        // Add the window property XdndAware to inform X that we accept drag-n-drop
-        (self.libx11.XChangeProperty)(
+        write_xdnd_aware(
+            self.libx11.XChangeProperty,
             self.display,
             self.window,
             self.libx11.extensions.xdnd_aware,
-            4 as _,
-            32,
-            PropModeReplace,
-            [5].as_ptr() as _, // XDnD version number
-            1,
         );
     }
+}
+
+type ChangeProperty = unsafe extern "C" fn(
+    *mut Display,
+    Window,
+    Atom,
+    Atom,
+    libc::c_int,
+    libc::c_int,
+    *const libc::c_uchar,
+    libc::c_int,
+) -> libc::c_int;
+
+unsafe fn write_xdnd_aware(
+    change_property: ChangeProperty,
+    display: *mut Display,
+    window: Window,
+    property: Atom,
+) {
+    // Xlib format32 reads native longs, including eight bytes per item on LP64.
+    let version: [libc::c_long; 1] = [5];
+    change_property(
+        display,
+        window,
+        property,
+        4, // XA_ATOM
+        32,
+        PropModeReplace,
+        version.as_ptr().cast(),
+        1,
+    );
 }
 
 impl X11DnD {
@@ -162,6 +188,130 @@ impl X11DnD {
                 );
                 (libx11.XFlush)(display);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod xdnd_property_tests {
+    use super::*;
+
+    #[test]
+    fn xdnd_writer_supplies_one_native_long() {
+        unsafe extern "C" fn checked_writer(
+            display: *mut Display,
+            window: Window,
+            property: Atom,
+            property_type: Atom,
+            format: libc::c_int,
+            mode: libc::c_int,
+            data: *const libc::c_uchar,
+            count: libc::c_int,
+        ) -> libc::c_int {
+            assert!(display.is_null());
+            assert_eq!((window, property, property_type), (11, 12, 4));
+            assert_eq!((format, mode, count), (32, PropModeReplace, 1));
+            // Exercise Xlib's actual native-long read, not just the wire value.
+            // Miri rejects the old four-byte allocation on an LP64 target.
+            assert_eq!(*data.cast::<libc::c_long>(), 5);
+            1
+        }
+        unsafe { write_xdnd_aware(checked_writer, std::ptr::null_mut(), 11, 12) };
+    }
+
+    #[test]
+    #[ignore = "requires an isolated live X11 server; run explicitly under Xvfb"]
+    fn live_x11_xdnd_awareness() {
+        struct Connection {
+            lib: LibX11,
+            display: *mut Display,
+            window: Window,
+        }
+        impl Drop for Connection {
+            fn drop(&mut self) {
+                unsafe {
+                    if self.window != 0 {
+                        (self.lib.XDestroyWindow)(self.display, self.window);
+                    }
+                    (self.lib.XCloseDisplay)(self.display);
+                }
+            }
+        }
+        unsafe {
+            let lib = LibX11::try_load().unwrap();
+            let display = (lib.XOpenDisplay)(std::ptr::null());
+            assert!(!display.is_null(), "XOpenDisplay failed");
+            let mut connection = Connection {
+                lib,
+                display,
+                window: 0,
+            };
+            let screen = (*(display as _XPrivDisplay)).default_screen;
+            let root = (*(*(display as _XPrivDisplay))
+                .screens
+                .offset(screen as isize))
+            .root;
+            connection.window = (connection.lib.XCreateWindow)(
+                display,
+                root,
+                0,
+                0,
+                8,
+                8,
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            );
+            assert_ne!(connection.window, 0);
+            let property = (connection.lib.XInternAtom)(display, b"XdndAware\0".as_ptr().cast(), 0);
+            assert_ne!(property, 0);
+            write_xdnd_aware(
+                connection.lib.XChangeProperty,
+                display,
+                connection.window,
+                property,
+            );
+            let mut property_type = 0;
+            let mut format = 0;
+            let mut count = 0;
+            let mut remaining = 0;
+            let mut data = std::ptr::null_mut();
+            let status = (connection.lib.XGetWindowProperty)(
+                display,
+                connection.window,
+                property,
+                0,
+                1,
+                0,
+                AnyPropertyType,
+                &mut property_type,
+                &mut format,
+                &mut count,
+                &mut remaining,
+                &mut data,
+            );
+            struct Property {
+                data: *mut libc::c_uchar,
+                free: unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int,
+            }
+            impl Drop for Property {
+                fn drop(&mut self) {
+                    if !self.data.is_null() {
+                        unsafe { (self.free)(self.data.cast()) };
+                    }
+                }
+            }
+            let reply = Property {
+                data,
+                free: connection.lib.XFree,
+            };
+            assert_eq!(status, Success as libc::c_int);
+            assert_eq!((property_type, format, count, remaining), (4, 32, 1, 0));
+            assert!(!reply.data.is_null());
+            assert_eq!(*reply.data.cast::<libc::c_long>(), 5);
         }
     }
 }

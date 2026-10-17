@@ -29,6 +29,10 @@ The upstream API, features, JavaScript source, and platform sources are retained
   `src/native/linux_x11/clipboard.rs`: checked native char/short/long buffer
   lengths, scoped XFree cleanup across INCR stages, and thread-local immutable
   message snapshots before FFI. Tests exercise the actual reply/transfer helpers.
+- Local X11 drag-and-drop initialization in `src/native/linux_x11/drag_n_drop.rs`:
+  `XdndAware` format-32 writes use a native `c_long` item, replacing an inferred
+  four-byte integer that Xlib overread on LP64. The production writer is covered
+  by native-long contract reads under Miri and a live Xlib property roundtrip.
 
 The latter changes are local fixes, not imported community patches. There are
 no other changes inside the vendored crate and no JavaScript/runtime update.
@@ -54,7 +58,7 @@ source tree, and run the standalone finite browser test:
 ```sh
 CARGO_TARGET_DIR=target/miniquad-tests cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib texture_deletion_tests
 CARGO_TARGET_DIR=target/miniquad-tests cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib property_tests
-CARGO_TARGET_DIR=target/miniquad-tests xvfb-run -a cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib live_x11_properties_and_clipboard_roundtrip -- --ignored
+CARGO_TARGET_DIR=target/miniquad-tests xvfb-run -a cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib live_x11_ -- --ignored
 python3 tests/texture_cache/browser.py
 ```
 
@@ -67,6 +71,16 @@ owners retain color/depth/resolve attachments: non-MSAA in both WebGL versions,
 four-sample MSAA in WebGL2, with and without depth. It checks the advertised
 resolve capability against the selected WebGL version. Its loader rejects missing imports.
 Results are written beneath `target/texture-cache-web/`.
+
+Xlib's [property manual](https://raw.githubusercontent.com/mirror/libX11/master/man/XGetWindowProperty.man)
+requires native long arrays for format-32 writes, and
+[XChangeProperty's implementation](https://raw.githubusercontent.com/mirror/libX11/master/src/ChProp.c)
+passes those items to `Data32` through a `long` pointer. The XDND wire format is
+still 32 bits; native storage is eight bytes on LP64 and four bytes on ILP32.
+`xdnd_property_tests` checks the actual production writer's pointer, metadata and
+native-long value; its ignored `live_x11_xdnd_awareness` test writes to a real
+X window and verifies type/format/count/version with XGetWindowProperty. The
+live test checks initialization, not a full external drag-and-drop session.
 
 To check the original failure when updating this patch, reconstruct the clean
 crate in a disposable checkout, build the same fixture there before applying

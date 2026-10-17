@@ -20,6 +20,8 @@ class DriverStartup(unittest.TestCase):
         self.assertIsNone(support.assigned_port("firefox", "Listening on 127.0.0.1:65536"))
         self.assertEqual(support.assigned_port("chrome", "ChromeDriver was started successfully on port 43123."), 43123)
         self.assertEqual(support.assigned_port("firefox", "123\tgeckodriver\tINFO\tListening on 127.0.0.1:43124\n"), 43124)
+        # A read racing the driver's write must not adopt a truncated port.
+        self.assertIsNone(support.assigned_port("firefox", "123\tgeckodriver\tINFO\tListening on 127.0.0.1:4312"))
 
     def test_exited_startups_retry_at_most_three_times_and_retain_every_log(self):
         @contextlib.contextmanager
@@ -91,6 +93,21 @@ class ProcessOwnership(unittest.TestCase):
                     break
                 self.assertLess(time.monotonic(), deadline, "Owned descendant survived group cleanup")
                 time.sleep(0.01)
+
+    def test_signalled_job_gets_its_cleanup_grace_before_kill(self):
+        # The job's own cleanup (e.g. deleting nested driver sessions) runs on
+        # SIGTERM; the owner must wait for it instead of killing at once.
+        code = "import signal,sys,time; from pathlib import Path\ndef stop(*_):\n    time.sleep(0.6); Path(sys.argv[1]).touch(); sys.exit(0)\nsignal.signal(signal.SIGTERM,stop); Path(sys.argv[2]).touch(); time.sleep(60)"
+        for grace, cleaned in [(0.1, False), (5, True)]:
+            with tempfile.TemporaryDirectory() as directory, self.subTest(grace=grace):
+                done, ready = Path(directory) / "done", Path(directory) / "ready"
+                with support.owned_process([sys.executable, "-c", code, str(done), str(ready)], grace=grace):
+                    deadline = time.monotonic() + 3
+                    while not ready.exists():
+                        self.assertLess(time.monotonic(), deadline, "Job failed to start")
+                        time.sleep(0.01)
+                self.assertEqual(done.exists(), cleaned)
+        self.assertGreaterEqual(support.JOB_CLEANUP_GRACE, 3 + 2 * 3)
 
     def test_cleanup_escalates_only_its_owned_group_and_waits_with_a_deadline(self):
         process = Mock(pid=12345)

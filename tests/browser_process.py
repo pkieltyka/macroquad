@@ -30,8 +30,14 @@ def stop_process_group(process, grace=3):
     process.wait(timeout=3)
 
 
+# A signalled suite deletes its WebDriver session (<=3s) and stops its own
+# driver groups (<=6s) before exiting. Wait that long before SIGKILL so nested
+# sessions never outlive the job that owns them.
+JOB_CLEANUP_GRACE = 20
+
+
 @contextlib.contextmanager
-def owned_process(command, **kwargs):
+def owned_process(command, grace=3, **kwargs):
     process = subprocess.Popen(command, start_new_session=True, **kwargs)
     previous = signal.getsignal(signal.SIGTERM)
 
@@ -43,7 +49,7 @@ def owned_process(command, **kwargs):
         yield process
     finally:
         try:
-            stop_process_group(process)
+            stop_process_group(process, grace)
         finally:
             signal.signal(signal.SIGTERM, previous)
 
@@ -52,7 +58,8 @@ def assigned_port(browser, text):
     pattern = (
         r"ChromeDriver was started successfully on port ([0-9]+)\."
         if browser == "chrome"
-        else r"Listening on 127\.0\.0\.1:([0-9]+)(?:\s|$)"
+        # Require the complete line: a read racing the write could see a prefix.
+        else r"Listening on 127\.0\.0\.1:([0-9]+)\r?\n"
     )
     match = re.search(pattern, text)
     if match and 0 < int(match[1]) <= 65535:
@@ -117,7 +124,7 @@ def with_window_manager(output, command):
             if manager.poll() is not None:
                 raise RuntimeError(f"Owned Openbox exited at startup; see {log.name}")
             env = {**os.environ, "MACROQUAD_BROWSER_WM_PID": str(manager.pid)}
-            with owned_process(command, env=env) as job:
+            with owned_process(command, grace=JOB_CLEANUP_GRACE, env=env) as job:
                 while job.poll() is None:
                     if manager.poll() is not None:
                         raise RuntimeError(f"Owned Openbox exited during browser checks; see {log.name}")

@@ -20,6 +20,15 @@ mkdir -p "$output"
 if [[ -z "${MACROQUAD_BROWSER_WM_PID:-}" ]]; then
     exec python3 tests/browser_process.py --window-manager "$output" -- bash "$0" "$@"
 fi
+# The owned window manager must be a live Openbox on this isolated display, not
+# a stale value or another session's manager. Nix's wrapper renames the process
+# to .openbox-wrapped.
+if [[ "$(cat "/proc/$MACROQUAD_BROWSER_WM_PID/comm" 2>/dev/null)" != *openbox* ]] \
+    || ! tr '\0' '\n' < "/proc/$MACROQUAD_BROWSER_WM_PID/environ" 2>/dev/null \
+        | grep -qxF "DISPLAY=${DISPLAY:-}"; then
+    echo "MACROQUAD_BROWSER_WM_PID does not name this display's live Openbox" >&2
+    exit 1
+fi
 {
     echo "Browser gate: $mode"
     git rev-parse HEAD

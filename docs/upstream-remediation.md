@@ -7,6 +7,50 @@ and browser WebGL use. [The patch ledger](patch-ledger.md) records reviewed PR
 heads and attribution; [the issue shortlist](upstream-issues.md) distinguishes
 reproductions from stale reports and measurement candidates.
 
+The reviewed library implementation is published at
+[`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271`](https://github.com/pkieltyka/macroquad/tree/ea02ddd91439fb1c5024f0dc062c6a04b1f3d271)
+on `zubspace-reviewed-ea02ddd`, with all four
+[fork CI jobs passing](https://github.com/pkieltyka/macroquad/actions/runs/38994560847).
+Publication makes the exact dependency fetchable; it does not publish an
+upstream issue, PR or advisory update. Zubspace integration `725dd5d` pins that
+revision and the paired runtime; game acceptance is tracked separately.
+Reviewed diagnostic/HUD fixture corrections and application respawn repair
+64c8f58 produced retained browser and local-image checkpoints, now historical.
+A later actual maxed Ship/spectator handoff failure required reviewed production
+repair `fb3fbd3928a20416fdde1234a8a327df9e483381`; matching source checks,
+actual objective retries and targeted lifecycle renewals passed. Current compiled
+client is `c975ae2634573605725107ebfcffc0785d632f3a`; fixture-only delivery
+is `6167ac530c2d5dfa963ad12cb5ecb1e9190ad049`, with retained native server
+source `ec9090fdc50734b6edaef930b12d70a684fcaab1`. The new f2f39d8 client
+and retained551c68 server image pair passed actual isolated Compose, independent
+verification and complete owned cleanup. Reorder passed all12 first-poll
+predicates with full audit. Chrome hostile two-bot combat supplied real observed
+child-explosion proof with authenticated attachment upload/GET/hash verification;
+the generic audit's null `qaTraceChildAudit` remains explicitly distinguished.
+[The patch ledger](patch-ledger.md#intermediate-application-acceptance-checkpoints)
+retains original REDs, primary-only history and exact artifact/evidence limits.
+Firefox two-bot subsequently passed, primary-only; a separate genuine-input
+primitive-JSON upload/GET probe passed exact-byte/whole-JSON equality. Historical
+nonlethal and fresh-upload identity REDs remain unchanged.
+The DEBUG high-refresh aggregate remains RED despite three passing cells; its
+approved single optimized-release renewal passed full independent verification.
+Private user integration2008 passed four bounded browser cells after a reviewed
+external-adapter renewal; the fixed09:49 snapshot and archived adapter cleanup
+RED remain explicit. The final five delivery stages and eight cadence/two startup cells passed
+independent verification. One matched Chrome Extreme cadence pair measured
+51.317 versus60.021Hz (14.50% lower), a material concern. Bounded analysis found
+workload equivalence unestablished: candidate had an early accepted respawn,
+while baseline's late respawn was rejected. Measurement/reporting is complete;
+these n=1 software-renderer observations isolate neither a library regression
+nor a benefit. Final document review is a separate handoff step.
+These inherited game/fixture findings do not establish a new Macroquad defect.
+
+The Macroquad source branch was published nonforce, and the actual four-job
+Actions run passed. Application/image deployment and upstream issue/PR/advisory
+submissions have not occurred. Publishing source is distinct from deploying the
+application, and the new game repair changes neither that library revision nor
+its official advisory status.
+
 ## Reusable fixes and their boundaries
 
 | Change and source | Local implementation and review evidence |
@@ -18,6 +62,8 @@ reproductions from stale reports and measurement candidates.
 | Local image/transfer validation | `1c8a686` makes image fields private and validates dimensions, byte lengths, rectangles and transfer arithmetic. Checked constructors and fixed-length mutation prevent invalid safe images reaching raw transfers. Image 0.25.10/MSRV 1.88 migration is separately recorded in `7f51ace`; neither change proves a size/startup win. |
 | Local X11 property boundaries | `f347a86` uses Xlib's native char/short/long layout for formats 8/16/32; format16 previously overread using int size. Checked replies and scoped cleanup cover INCR stages. TLS snapshots replace mutable global clipboard storage without a borrow crossing FFI. Actual-helper Miri tests run on x86_64/i686; live Xvfb checks properties and self-selection, not multi-client INCR timing. |
 | Local GL render-pass/depth/capability contracts | `f347a86` makes pass deletion non-owning for attachments, matching Metal. Native/WebGL regressions delete/recreate passes while retaining color/depth/resolve owners. WebGL1 vendor-suffixed strings no longer advertise resolves, WebGL2 standard depth creation/resize uses its required sized format, and the initial GL version copy accepts null. This does not implement context restoration or validate every format/GPU. |
+| Local XDND property writer | `4f9022c` supplies native `c_long` storage for XChangeProperty format32 during every supported X11 initialization. The old i32 allocation fails the actual-writer Miri regression on LP64; corrected code passes x86_64/i686 and real Xlib property readback. A full external drag/drop session is not claimed. |
+| Local scoped ownership and destruction | `ea02ddd` gives context/backend/UI independent scoped owners, retains resources through queued draws and attachment clones, and defers deletion until the originating owner can drain it. Camera/input/uniform/destructor callbacks do not retain component-cell borrows. Independent/accumulated review and CPU/Miri/native/browser regressions cover the supported surface; the migration is intentionally breaking. |
 
 The Miniquad archive, checksum, original licenses, complete delta and exact
 reconstruction are in [vendor/README.md](../vendor/README.md). Its local changes

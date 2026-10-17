@@ -41,10 +41,10 @@ Regression entry points are `tobytes::tests`, `quad_gl::uniform_tests`, the two
 graphics cases cover empty/first/reused UI material, raw UI texture followed by the atlas, valid scalar/array uploads,
 and default-material reset for empty and populated UI frames.
 
-Browser startup/frame-time benefit in Zubspace remains unmeasured. Upstream's
-phone timings are not measurements of this fork. Native and browser regression
-results are recorded in the working punchlist; release Zubspace acceptance
-belongs to the pinned-fork integration checkpoint.
+No causal startup/frame-time benefit in Zubspace is established. Upstream's
+phone timings are not measurements of this fork. Matched release startup and
+artifact-size observations are summarized in [the dependency audit](dependency-audit.md);
+the final game acceptance remains separate from those measurements.
 
 ## Deleted-texture binding cache
 
@@ -74,6 +74,14 @@ boundary fixes rather than imports of an unrelated backend revision.
 [Vendor provenance](../vendor/README.md) records the reconstructible patch;
 direct native/WebGL1/WebGL2 fixtures cover attachment reuse and capabilities.
 
+Accumulated review additionally found an unconditional LP64 initialization
+overread in `XdndAware`: format32 passed an inferred i32 item to Xlib's native
+long reader. Local commit `4f9022cf796ae16f5987273ee938e45c8f51e789` uses one
+`c_long`. The actual production writer passes native-long reads under Miri on
+x86_64/i686 and real Xvfb type/format/count/version readback. Restoring the old
+allocation makes its regression fail under x86_64 Miri. Full external drag/drop
+and multi-client INCR timing are not claimed by these focused tests.
+
 ## Independent coroutine and audio lifetimes
 
 Adapt the audio-isolation direction in [#973](https://github.com/not-fl3/macroquad/pull/973),
@@ -100,8 +108,9 @@ the grouped integration tests, and `examples/audio_lifecycle_regression.rs` with
 `tests/audio_lifecycle_regression.html`. CPU ownership helpers run under Miri
 on x86_64 and i686. The finite audio fixture checks genuine Chrome/Firefox
 WebAudio imports, failed decode, pending cancellation, clone/drop and unclaimed
-result cleanup. Graphics context, UI, telemetry and GPU resource ownership remain
-separate required work; this batch does not close RUSTSEC-2025-0035.
+result cleanup. Graphics context, UI, telemetry and GPU resource ownership were
+completed in the separate scoped-ownership batch below; this audio batch alone
+does not establish advisory-wide remediation.
 
 ## Image dependency modernization
 
@@ -116,14 +125,15 @@ image bounds and graphics transfer regressions remain applicable.
 This is a local dependency migration, not an imported community patch.
 [Dependency audit](dependency-audit.md) records primary release sources,
 compatibility/MSRV consequences, target boundaries and remaining decisions.
-Zubspace already depends directly on image 0.25.10; actual graph consolidation
-and release size/startup benefits are verified during fork integration, not
-assumed here. Preserve the vendored Miniquad patch; this change does not
+Zubspace's combined graph now has one image/PNG family; actual release sizes
+increased and the startup samples establish no benefit, as recorded in the
+dependency audit. Preserve the vendored Miniquad patch; this change does not
 establish closure of Macroquad or font-parser advisories.
 
 ## Scoped graphics and supported-surface ownership
 
-Local remediation of [#333](https://github.com/not-fl3/macroquad/issues/333)
+Local commit `ea02ddd91439fb1c5024f0dc062c6a04b1f3d271` remediates
+[#333](https://github.com/not-fl3/macroquad/issues/333) for the supported surface and
 replaces unrestricted mutable globals with scoped TLS context/backend/UI owners.
 GPU guards retain their originating owner and enqueue deletion; draw, camera,
 material and capture leases retain required resources until flush/reset. The
@@ -136,7 +146,317 @@ pointers are removed. GPU timing is explicitly unavailable rather than zero.
 These are local ownership adaptations, not a wholesale import of #973 or a
 standalone advisory closure claim. [Security inventory](security.md) records
 remaining foreign contracts, intentional API breaks and actual regression entry
-points. Final accumulated review and matching Zubspace acceptance remain gates.
+points. Independent and accumulated library review and all four
+[fork CI jobs](https://github.com/pkieltyka/macroquad/actions/runs/38994560847)
+passed for that revision. Matching Zubspace acceptance remains a separate gate.
+
+## Intermediate application acceptance checkpoints
+
+The Zubspace integration history additionally contains reviewed harness-only
+changes: `aeaaec5a98c571af0bf8295d3d3a6573b8ef984c` retains mixed-smoke timeout
+state and drains failure logs; `decf5ceb4a558f6aa37cd94869e2e167b3e30bbd`
+corrects the mixed fixture's stale HUD-line expectation to the ordinary compact
+HUD contract; `e521024672235c5401c5da6ddf0702c15df96433` applies that same
+contract to standalone browser smoke. These commits do not change application
+WASM, JavaScript or native server bytes.
+
+The retained `smoke-mixed-rtc` Chrome/Firefox, Chaos-arena subgate passed at
+that fixture checkpoint, with genuine RTC and independently verified artifact
+provenance. Its result is
+`reviews/mixed-smoke-e521024/mixed-smoke/result.json` in the retained Zubspace
+review evidence. This was one focused subgate at that checkpoint; the final outcome map below
+supersedes its then-pending canonical14/release notes without relabeling it.
+
+The independently reviewed respawn repair is now integrated as application
+source `64c8f58ca4c58c5b30baf03f55fd4510f2f8c174`. Its actual previously failing
+Chrome/Extreme-arena mild-network cell passed strict life-2 admission at energy
+2800, followed by held-key suppression, fresh input, focus/network/security and
+cleanup checks. All four canonical12 mild keyboard cells passed on those app
+bits. The inherited failure and matching current-crates control remain retained;
+the earlier pre-repair runs do not become post-repair evidence.
+
+Canonical11's software run remains RED/unclassified (seven peers passed; peer3
+had a 12-tick gap against the 10-tick floor). Its prescribed native-GPU renewal
+passed all eight peers, maximum gap nine ticks, with actual RX9060XT hardware
+WebGL/compositing and independent provenance checks. These are separate retained
+verdicts, not a rewritten original aggregate result.
+
+The reviewed fixture/notice head for the app64 checkpoint was
+`3875e57e2c36d67964988168c928271906834e67`, including observed-explosion proof
+correction `fa3e38b0a81be371d0a4115b51482615818f3608` and the reviewed ASSETS
+notice cherry-pick. All nine compiled/application/lock/metadata hashes still
+match app source `64c8f58`; host notice packaging copied only ASSETS.md without
+rebuilding/restamping the app. Its 20-file HTTP closure and eight local notice
+links passed. `notice-package-3875e57/manifest.json` and `artifact-manifest.json`
+under retained `reviews/final-acceptance-64c8f58/` distinguish those identities.
+
+The local image pair accepted for app64 is identified below. It is historical
+after the later Ship repair and must not stand in for newly built images:
+
+| Image | SHA256 image ID |
+| --- | --- |
+| Corrected client, reviewed notice context `cb0db65` | `e211ef66646f2bc2050cceef19cda9155704adaa269d07e4e24b31a858407a94` |
+| Retained server, reviewed context `712a5d1` | `f45d6f7d38463acd90c8b0e0fddfcf4919571ecf505c2452c53ff799ea71716f` |
+
+The client supersedes the earlier stale-notice image; the server does not
+consume ASSETS.md. The exact pair passed actual isolated Compose RTC acceptance
+and independent verification using unique project `zubspace-compose-rtc-2772334`,
+client/server ports 17000/19001 and UDP 19202–19401. Owned containers and isolated
+listeners were absent after cleanup; original services were preserved. This used
+an explicit temporary prebuilt-image configuration and documented recipe
+composition, not the unchanged default Make invocation. Exact context/image
+records are in `final-images-reviewed-712a5d1/manifest.json`; Compose results and
+cleanup are in `final-isolated-compose-images-712a5d1/manifest.json` and
+`retained-compose-rtc/result.json` beneath that retained evidence root.
+
+Historical Firefox/Chaos bomb-child failure remains RED: it had no observed
+explosion-commit fact. Source-only failure recaptures and offline lineage checks
+are diagnostic records, not newly observed browser child-proof acceptance.
+All four mild bot cells now pass across Chrome/Firefox and Chaos/Extreme with
+mild network profile seed20260827, using the documented direct-case execution
+maps rather than a claim that the unchanged aggregate passed. Chrome used fixture
+`712a5d1`; Firefox used `3875e57`; all used app source `64c8f58`. Every passing
+app64 retry was primary-only: the reviewed `fa3e38b0` observed-child branch was
+then unexercised. Historical missing-commit Firefox failure is not reconstructed
+or upgraded by those runs. The later c975 Chrome observation below supplies new
+actual child proof without changing those historical results.
+
+Snapshot-loss and Chrome/Firefox input recovery passed their independent full
+provenance audits. Immediate impairment passed its channel contract and both
+12%-server-loss natural-prize arms with independent verification; the retained
+mixed smoke and actual 200-peer capacity gate also passed those audits. The
+capacity recipe rebuilt its optimized server at fixture `3875e57` from unchanged
+production Rust, so its actual release-server identity is retained separately
+from the nine frozen app/debug artifacts. Standalone ordinary-HUD smoke passed
+with stdout-only evidence, without an artifactFiles/full-recapture claim.
+
+The records and mild Firefox summaries are in
+`continuation-3875e57/execution-map.json`; Chrome mild cells remain in
+`continuation-712a5d1/execution-map.json`. That application completed 17 of its
+32 continuation invocations, including both aged-server arms and focused
+semantic/baseline/warp/wormhole/Portal/prize/negative-energy lanes. Those passes
+retain their original source identities and evidence limits; stdout-only recipes
+are not full artifact/QA captures.
+
+Focused objective-authority then found another genuine inherited product gap:
+Extreme ship2/Javelin submitted authored energy1200 while strict maxed Ship
+admission required2000. The server rejected the baseline and clients rejoined.
+This was not a fixture precondition, and no authored-policy workaround was
+accepted. The original failure remains under the app64 continuation evidence.
+
+The reviewed production repair is now clean committed delivery
+`fb3fbd3928a20416fdde1234a8a327df9e483381`. It independently negotiates Ship
+handoff, discovers capability through observer metadata and freezes only an
+explicit Ship transaction, avoiding an InitialJoin deadlock. It covers ordinary
+Ship and spectator return while retaining exact scope/life/neutral admission and
+application-receipt barriers. Three fresh reviews resolved the discovery/join
+boundaries; the final review found no issues. Matching frozen source validation
+passed 64 Node,1321 client,1413 server tests,24 actual cross-binary cells and
+native-all-target/WASM checks. The CPU exchange does not round-trip an actual
+server receipt into Game; browser receipt renewals remain required.
+
+Current authoritative evidence is
+`reviews/final-acceptance-c975ae2/manifest.json`. Compiled client source is
+`c975ae2634573605725107ebfcffc0785d632f3a`; fixture-only delivery is now
+`6167ac530c2d5dfa963ad12cb5ecb1e9190ad049`. Retained native server source is
+`ec9090fdc50734b6edaef930b12d70a684fcaab1`. The c975 client repair followed
+fixture diagnostics626 and the reviewed readiness pilot8ecd1b5. Its actual
+native/debug-WASM/release-package/runtime-identity checks passed. Server debug/
+release binaries, lockfile and paired runtime/metadata are byte-unchanged, with
+separate identities in `artifact-manifest.json`; the server is not restamped.
+
+The preceding fb3 native/debug, release/package and common checks passed.
+Native release integration recorded1408 passing/11 ignored tests; the ec909
+server renewal recorded1412 passing/11 ignored. Actual objective retries passed
+both arenas with original player IDs, life2 maxed energy2000, no RTC rejoin and
+zero security violations, with full artifact/QA audits. Baseline receipt, ship
+energy, all eight ships' abilities, Chrome/Firefox Extreme spectator return,
+clean URL and clock-stall renewals passed. The initial Firefox spectator stdout
+PASS lost temporary artifacts; an approved identical persistent renewal passed
+a full24-file/two-QA audit, without reconstructing the lost capture.
+
+Active-projectile recovery first failed with53 nonlethal target hits and42 human
+bullet deaths. Reviewed child-only fixture `20ef2e7` isolates the authored moving
+bot's life2 while preserving motion, other hostile lives and strict assertions.
+The actual retry passed its full13-file/one-QA audit:458 copies were dropped,
+458 events delayed/released, none pending/expired, and the moving primary
+projectile was lethal. This retry was primary-only. Ordinary special-weapon arms
+passed Chrome/Firefox in both Chaos and Extreme arenas with full audits.
+
+The former ec909-server/fb3-client Compose checkpoint remains archived under
+`reviews/final-acceptance-ec9090f/final-server-image-ec9090f/manifest.json`.
+Its client973a646 is superseded. Current image evidence is
+`reviews/final-acceptance-c975ae2/final-client-image-c975ae2/manifest.json`:
+new client image
+`f2f39d841c027cb8de8cff9e4274a826d5dcc5b23465a88ca95981f6f1f4d2f4`
+and unchanged server image
+`551c68be95742fee7470ce61e212e3598751e3bb374db43333097d6755550848`
+passed actual isolated prebuilt-image Compose, independent verification and fresh
+review. Served21-file HTTP comparisons were byte-exact, ACK20 progressed and
+owned sessions/clients/UDP counts went0→1→0 with complete cleanup. Original
+service ports were preserved. This is bounded RTC/package evidence, not a
+full artifactFiles/QA capture, combat/capacity, Firefox or performance claim.
+No image was deployed or externally published; old serverd678 remains historical.
+
+The c975 FIRST forced-reorder renewal passed `reorder-outcome.json` and its
+independent21-file/three-QA audit: all12 strict predicates were true on first
+poll, exact observerThor25/event31/mutation33 survived, held event IDs1/29/30/31
+were retained and security/queues were zero. The old20ef/ec909/626 REDs remain
+archived. Earlier ThorSensor parity and imported-Thor identity hypotheses were
+not established: both sides preserve ThorSensor, and the decoder rejects the
+proposed canonical-Thor/sensor combination. Source-only diagnostic recaptures
+remain distinct from this actual successful browser observation.
+
+Chrome's fully hostile two-bot run also passed, with actual observed child proof
+in `chrome-2bot-outcome.json`: parent91/type4/weapon8868/group76, owner0/life7,
+committed explosion at5881 with eight fragments; child97/type15 dealt400 damage
+(energy293→0) to exact victim768/life2. Authenticated QA attachment upload and
+GET200 returned377,617 bytes with SHA256
+`f44e524cef40c146201e5b169cc6ee6cf66ae37afdbc849c1a05caa982258a7c`.
+Source/server/WASM scope bindings and the observed commit were checked before
+PASS. The general independent verifier covered14 files/one QA attachment;
+`qaTraceChildAudit` is null, not a separate commit-labeled audit. The earlier
+unexercised-child limitation is therefore resolved by this new observation,
+without upgrading historical primary-only runs or missing-commit failures.
+Hostility remained unchanged; audio recorded559 running starts/zero resume
+failures and the primary moving anchor traveled353.23px.
+
+Firefox's FIRST ordinary two-bot execution remains RED: six60-second pursuits
+produced148 nonlethal hits (30 primary/118 children) against victim768/life2,
+without the required death. `firefox-2bot-failure-analysis.json` retains13 raw
+file hashes and source/served-identity audit only, not a full QA-manifest audit.
+Reviewed fixture-only held-key correction b901→delivery9d57 advanced to an
+actual death/observed commit, but that renewal remained RED at exact fresh-upload
+versus GET equality: six last-bit floating-point differences after WebDriver
+object transfer. Raw GET independently retained parent208/group163/owner0/life12,
+child215/commit12985/fan8 and victim768/life1 damage6/energy1→0/death104; the
+failed live identity gate prevents accepted-proof/PASS claims for that run.
+Reviewed JSON-primitive capture7dac→delivery6167 preserves exact equality,
+without epsilon or rounding. All ten compiled artifacts remain byte-unchanged;
+the subsequent strict actual Firefox renewal passed as recorded below.
+
+The old high-refresh common prerequisite and three keyboard cells passed with
+full audits, including Firefox Chaos. Its DEBUG Firefox Extreme cell remains
+RED:12 inclusive draw samples over151ms yielded72.8477Hz, below the90Hz/16-sample floor,
+before gameplay. Markers were present; actual renderer was not captured, so no
+GPU/software or host cause is inferred. The approved single optimized-release
+Firefox Extreme renewal passed both the driver and independent full verifier
+(five files/two QA traces), with12 strict input proofs, minimum117.65Hz/19 draws,
+eight zero-canonical-step proofs and zero security/cleanup counts. The release
+common prerequisite also passed. Exact evidence is
+`final-continuation-audits/firefox-extreme-high-refresh-release-renewal-summary.json`.
+An abbreviated-stdout external classifier was corrected before direct retained
+verification; no browser rerun or product change supplied that correction.
+This separate supported release renewal does not rewrite the DEBUG aggregate.
+
+Latest-user snapshot09:49:46Z at
+`44e01bd636345546cab7f2f8d2cd89ac991e85e3` was integrated privately with c975
+as reviewed commit `2008e5cc6905e387662a45b59f8d0eb4ca42033b`, tree
+`963d0cf096d8419f8fe26b8fd5f1ef7a6823fecf`. The105-path snapshot required16
+manual resolutions/seven adaptations. Native1368/1470,24 cross-side cells,
+143 Node checks, native-all-targets, debug/release WASM/package/import/notices
+and formatting passed, with fresh review finding no blockers. Native overlay
+release recorded1465 passing/11 ignored tests.
+All four bounded overlay browser cells now pass: Chrome/Firefox ordinary release
+startup, Chrome weapon cutover and mixed-browser release combat. The first mixed
+run passed both strict gameplay/wire cycles but remained RED at cleanup because
+an external Firefox callback contained a semicolon SyntaxError. Fresh-reviewed
+R2 external adapter (18 focused tests) supplied one affected renewal, which passed
+two exact cycles, RTC drain and full23-file/two-fresh-QA audit. The prior RED
+remains immutable. Exact accepted manifest is
+`reviews/final-user-acceptance-2008e5c-renewal-r2/manifest.json`; source and earlier
+checks remain under `reviews/latest-user-overlay-20261017T094946Z/`.
+
+That accepted overlay is the fixed09:49 snapshot, not an assurance about later
+user commits: the original externally advanced to clean8b9741fe and was not
+chased or modified. The private fixture combination was subsequently reviewed clear and committed
+clean as `f1afd7aa906901489f66d93544ebc8be255693f9`, tree
+`cd57ba2b5413b1b6107fc490e4adde043198cdb2`, parent2008. It reconciles only
+seven fixture files from reviewed b901/7dac, with247 selected Node tests passing
+and no production delta. Application artifacts and the four bounded acceptance
+cells remain compiled2008; no rebuild/restamp or extra browser PASS is inferred.
+
+The remaining delivery outcomes are complete on fixture6167/clientc975/serverec909:
+
+- Firefox strict two-bot renewal passed a full13-file/one-QA audit. Primary-family4
+  projectile163 dealt649 damage (energy480→0) to victim768/life2, followed by
+  life3 damage1700→1300. All51 fresh projectile groups drew,566 audio starts
+  ran with zero resume failures, security/queues were zero and cleanup completed.
+  This successful run had `childCapture.exercised:false` and no captures: it
+  neither proves primitive-JSON transport nor upgrades the earlier child GET RED.
+- One separate genuine-input Firefox QA transport probe passed14-file/one-QA
+  verification. Its25 accepted rotation/neutral samples and fresh upload/GET
+  retained exactly equal whole JSON and raw bytes:148,943 bytes, SHA256
+  `68ff260d9273b0f4cc01028a92eebf3c08c36ee7058c118bd6e8968c99196710`.
+  This establishes the primitive-JSON transport path, with no death/child claim.
+- Focused20 first failed before gameplay on headless Gecko SWGL/WebGL
+  initialization; actor capture contains no actual Firefox channel states. The
+  approved same-assertion headed-Xvfb renewal passed16 files/two QA captures.
+  Manual21 passed14 files with two intentionally disabled QA captures; aimed22
+  and bomb23 each passed16 files/two QA; transport24 passed19 files/two QA.
+  All have independent full verification and empty owned-process cleanup. The
+  default headless20 RED is retained separately from the supported renewal.
+
+The exact retained outcomes are `firefox-2bot-json-identity-outcome.json`,
+`primitive-json-transport-probe/outcome.json` and `final-focused-five-outcome.json`
+under `reviews/final-acceptance-c975ae2/`. Canonical14's channel/mixed/capacity200/
+immutable-image Compose decomposition and the earlier retained canonical/focused
+passes remain source-qualified in the preceding evidence roots. Final acceptance
+uses that documented decomposition and affected-source renewals, not a claim
+that every unchanged default aggregate passed. Final evidence lives here and in
+external manifests; packaged browser-runtime provenance keeps its migration-time
+record, whose historical pending notes are superseded here without changing
+accepted package/image inputs.
+
+## Final release measurement checkpoint
+
+`reviews/final-acceptance-c975ae2/matched-release-measurements/execution-map.json`
+records eight cadence cells (four pairs) and two final startup-only cells,
+each independently verified. Baseline client1dfb909 and final clientc975 used
+fixture6167, the same ec909 debug server and optimized-release WASM. Each pair
+matched actual renderer and viewport; all observed-load-overlap arrays were
+empty. Chrome155 used ANGLE/SwiftShader WebGL1 at1280×720; headed Firefox158
+used Mesa llvmpipe WebGL1 at1262×795, with drawing buffers recorded separately.
+These are software-renderer measurements, not native-GPU performance claims.
+Chaos/Extreme identify arenas; these ordinary URLs requested no impairment.
+
+| Browser / arena | Baseline Hz | Final Hz | Baseline / final maximum gap |
+| --- | ---: | ---: | ---: |
+| Chrome / Chaos | 57.903 | 60.016 | 31.4 /18.9ms |
+| Firefox / Chaos | 58.994 | 58.825 | 35 /47ms |
+| Chrome / Extreme | 60.021 | 51.317 | 18.4 /34.5ms |
+| Firefox / Extreme | 58.974 | 58.991 | 51 /37ms |
+
+Each cadence cell sampled roughly60 seconds once. Chrome Extreme is14.50%
+lower and remains a material performance concern. The bounded classification in
+`chrome-extreme-bounded-analysis.json` found actual workload equivalence was not
+established: candidate damage began6.924s into capture, with a lethal hit9.509s
+in and an accepted life2 respawn; baseline damage began44.995s in, with a lethal
+hit48.928s in and a rejected respawn baseline. The screenshots showing2800
+versus1650 energy were saved after disconnect/cleanup, not during cadence, and
+cannot establish per-frame rendering work. Ordinary QA was disabled; there are
+no entity/draw-count histories, full interval series or CPU profiles. Finite
+passive samples found no overlapping heavy processes but cannot exclude all
+unsampled/shared-system effects. The actual ordinary gates (at least20 callbacks/
+second and no gaps≥80ms, plus genuine input/delivery/security/cleanup) passed
+unchanged. Measuring/reporting is complete; this combined n=1 comparison isolates
+neither a library regression nor a benefit and does not dismiss the lower result. The two final Chaos startup-only probes passed: navigation→gameplay was
+3714.5ms in Chrome and4765ms in Firefox (one sample each). Navigation→loading
+complete/harness-ready was3215.4/5358.4ms in Chrome and3354/6312ms in Firefox;
+these final-only probes supply no new paired startup speed inference. Host WASM grew6,440,789→6,573,379 bytes
+(+132,590/+2.06%) under the same Rust1.98.1 producer; paired JS stayed38,256.
+This includes application/API changes and is not attributable solely to image.
+
+`window-closure.json` records all1102 source files, ten actual artifacts and14
+baseline files unchanged, with no hash mismatches or owned processes left.
+All ten cells passed independent full audits, and the measure-and-report outcome
+is achieved with the concern and attribution limits above retained. No further
+case/probe remains in the approved acceptance queue. Documentation review/commit
+is the remaining handoff step; this report does not imply an unknown future
+commit or alter tested artifacts. No app/image deployment, change to the original
+user branch/services, or upstream issue/PR/advisory submission has occurred.
+The private reviewed user integration and published Macroquad revision retain
+their distinct source identities and limitations.
 
 ## Reviewed deferrals and rejections
 
@@ -158,6 +478,10 @@ heads remain current later.
 | [#867](https://github.com/not-fl3/macroquad/pull/867), `919f3ad1e4ac99a2c886bdcc2706a42a4f32daec` | Reject as a soundness fix. Only adds deprecation warnings to safe tween functions that still execute undefined behavior. The reviewer explicitly suggests fixing their API. |
 | [#849](https://github.com/not-fl3/macroquad/pull/849), `2faab3bfa9de22459a9e04ca1ca43cd594897a15` | Reject. The author reports that the alpha-blend change makes textures disappear in 3D scenes; no corrective commit or validating discussion was present. |
 
-Rollback for this initial batch is the upstream base above. Once Zubspace pins
-the fork, record its prior dependency revision and matching browser artifact in
-the integration entry before changing that pair.
+The initial library batch rolls back to the upstream base above. Zubspace's
+paired pre-fork integration rollback is
+`1dfb9096a19d614f08a4aedd9109011dc7d3796e`; restore Rust dependencies/lockfile,
+runtime sources/generated bundle/provenance and Image/task migrations together.
+Its integration `725dd5d` pins this published fork revision and requires the
+audio-state extension. The application checkpoint and final acceptance artifacts
+must be identified separately from the immutable library revision.

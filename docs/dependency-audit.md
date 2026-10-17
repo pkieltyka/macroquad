@@ -6,9 +6,9 @@ Scope: root and retained auxiliary manifests, root and Zubspace lockfiles,
 and `cargo tree --locked --offline -e normal` for Linux native/no-audio,
 WASM/audio and optional Linux native/audio. Latest stable versions and declared
 Rust requirements were checked against the linked crates.io API records;
-compatibility notes come from upstream sources. `cargo-outdated` and
-`cargo-audit` were unavailable and were not installed. No dependency was changed
-for the initial audit.
+compatibility notes come from upstream sources. At the initial audit,
+`cargo-outdated` and `cargo-audit` were unavailable and were not installed. No
+dependency was changed for the initial audit.
 
 ## Direct dependencies at the initial audit
 
@@ -120,13 +120,15 @@ decision for candidates that remain deferred.
 
 ## Image upgrade implementation
 
-The fork now requires image `0.25.10`, with defaults disabled and only PNG/TGA
-enabled, and declares Rust **1.88** as its minimum. The isolated resolved graph
+The implemented upgrade in `7f51ace` moves image **0.24.9 → 0.25.10** to
+remove Zubspace's actual duplicate image/PNG family while preserving the two
+supported codecs. Defaults stay disabled with only PNG/TGA enabled, and the
+fork declares Rust **1.88** as its minimum. The isolated resolved graph
 contains image 0.25.10 and PNG 0.18.1, plus moxcms 0.8.1/pxfm 0.1.30; the
 miniz_oxide 0.8.9/0.9.1 split remains. The root lockfile is intentionally
-untracked; consuming applications must resolve and pin their own graph. Exact
-Zubspace image/PNG consolidation and packaged size/startup measurements remain
-part of fork integration, with no performance claim from this batch.
+untracked; consuming applications must resolve and pin their own graph. The
+combined Zubspace graph and measured artifact sizes are recorded below; neither
+deduplication nor this dependency change alone establishes a performance benefit.
 
 The removed `ImageOutputFormat` test API is migrated to `ImageFormat`.
 Macroquad's public image-format parameters/reexport and `Error::ImageError`
@@ -165,5 +167,93 @@ Decisions for the current Zubspace integration:
   and a shipped default font do not resolve the advisory. No capability is
   removed or advisory suppressed by this decision.
 
-Final accumulated-code and Zubspace graph/advisory re-audits remain pending;
-these dependency decisions do not establish security or release acceptance.
+## Combined Zubspace graph and advisory checkpoint
+
+Zubspace integration commit `725dd5d31ad480e296f3396e532faf2752df3af2`
+pins Macroquad and vendored Miniquad to HTTPS Git revision
+[`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271`](https://github.com/pkieltyka/macroquad/tree/ea02ddd91439fb1c5024f0dc062c6a04b1f3d271).
+The fork revision is published on `zubspace-reviewed-ea02ddd`; upstream and fork
+`master` were not advanced by that publication. Zubspace's committed lockfile,
+275 locked packages, `docs/third-party-dependencies.json` (274 third-party
+notice entries), and
+`docs/browser-runtime-provenance.md` identify the actual application graph.
+
+Current compiled client `c975ae2634573605725107ebfcffc0785d632f3a`, fixture
+delivery `6167ac530c2d5dfa963ad12cb5ecb1e9190ad049` and retained server
+source `ec9090fdc50734b6edaef930b12d70a684fcaab1` do not change dependencies.
+They retain the app64/fixture3875 selected graph and
+lockfile SHA256
+`a7c79561ddba709183c4090c89c131e5b1cd753d1635f55d93a97be30981d162`.
+The current lockfile was read directly to reconfirm the versions below; fixture
+and notice corrections did not introduce dependency upgrades.
+
+Native/no-audio and WASM/audio now share one image 0.25.10 and PNG 0.18.1;
+image 0.24.9/PNG 0.17 are absent. Application features combine BMP/GIF/JPEG/PNG
+with the fork's PNG/TGA. Glam remains 0.27.0, fontdue 0.9.4 retains ttf-parser
+0.25.1, miniz_oxide 0.8.9/0.9.1 remains duplicated, and nanoserde is absent from
+the application graph. Optional native audio retains quad-snd 0.2.8 and
+quad-alsa-sys 0.3.2; normal native builds exclude them. The evaluated deferrals
+above stand; no unrelated major upgrade is required by this checkpoint.
+
+The recorded re-audit used cargo-audit 0.22.2 and RustSec database revision
+`64f92cdc64401fab47baa10e2e11fe382aa57155` (1,334 advisories). The Git-pinned
+lockfile has no vulnerability-table entries and retains informational
+RUSTSEC-2026-0192 for unmaintained ttf-parser. Registry Macroquad 0.4.16 also
+reports informational RUSTSEC-2025-0035. Its omission for the Git source does
+not establish an official patched version or advisory closure. No ignore rules
+or advisory suppressions were added, and this is not an audit-clean claim.
+
+Application checks used Rust 1.98.1/Cargo 1.98.0; its configured compiler is
+1.97.1. The fork's separately tested Rust 1.88 minimum does not apply to the
+whole application: the inherited native networking graph includes uuid with a
+declared Rust 1.89 minimum.
+
+The following are intermediate, pre-respawn-repair observations of the
+`725dd5d` application checkpoint, not final shipping artifacts. Matched
+optimized-release artifacts use the same Rust 1.98.1 producer. WASM
+grew from 6,440,789 to 6,576,012 bytes (+135,223; +2.10%); paired JavaScript
+stays byte-identical at 38,256 bytes. Application API migrations and ownership
+changes contribute too, so the difference is not attributed solely to image.
+One startup sample per browser supports no speedup/regression inference.
+Pre-repair browser runs, earlier container images and cadence/startup captures
+remain intermediate. The archived app64 source
+`64c8f58ca4c58c5b30baf03f55fd4510f2f8c174` produced a host release WASM of
+6,573,834 bytes (+133,045/+2.07% against the 6,440,789-byte baseline); its
+JavaScript was 38,256 bytes. Fixture/notice head3875 preserved nine app64 artifact
+hashes, including the lockfile. Those sizes, its accepted image pair/Compose
+checkpoint and17 passing continuation invocations are historical after the
+reviewed Ship/spectator repair `fb3fbd3`, not measurements of its new binaries.
+[The patch ledger](patch-ledger.md#intermediate-application-acceptance-checkpoints)
+records both product failures, independent repairs and exact evidence roots.
+
+The fb3 host release/package checkpoint produced WASM 6,573,234 bytes;
+its former973a646 client image is historical after the c975 client repair.
+The current c975 host release WASM is 6,573,379 bytes, SHA256
+`2359c9e9e1fee912b5e51ffa0f310fe41b4167164606d39d0999e52d7aeed0c0`,
+with unchanged 38,256-byte paired JavaScript. This is +132,590 bytes (+2.06%)
+against the same-producer 6,440,789-byte baseline, an artifact-size observation
+rather than a causal dependency or performance claim. The ec909 debug/release
+server, lockfile, paired runtime and metadata remain unchanged. Current client
+image f2f39d8 uses a different Rust producer; its 6,524,236-byte WASM must not
+replace the host measurement above.
+
+Objective-first and targeted Ship renewals passed. The c975 reorder retry and
+Chrome hostile two-bot run passed with actual observed child-explosion proof;
+the new client/retained-server image pair passed isolated Compose. Firefox
+two-bot acceptance subsequently passed its full13-file/one-QA audit, primary-only;
+a separate genuine-input Firefox primitive-JSON upload/GET probe passed exact
+whole-JSON/raw-byte equality. Earlier nonlethal/identity REDs remain retained;
+fixture-only corrections preserve all ten compiled artifact identities.
+Private latest-user integration2008 passed its four bounded browser cells after
+a reviewed external-adapter renewal; its separate graph/artifacts are not the
+delivery graph above. The final five focused delivery outcomes and eight cadence/two startup cells
+also passed independent verification. Chrome Extreme nevertheless measured
+51.317 versus60.021Hz (about14.5% lower) in one comparable software-renderer pair;
+it remains a material concern, with workload equivalence not established
+(candidate accepted a much earlier death/respawn, baseline rejected respawn).
+The completed measure-and-report outcome establishes no isolated library
+regression or benefit. Final documentary review is a separate handoff step.
+[The ledger](patch-ledger.md#final-release-measurement-checkpoint) records all
+four n=1 cadence pairs, exact source/image tuples and proof limits. Dependency
+deferrals and advisory limitations above stand; these observations establish
+no official advisory closure or performance win.

@@ -7,10 +7,14 @@ WebGL1/2 are supported. Window initialization rejects Wayland and other native
 OS targets before entering Miniquad. Companion crates remain build targets but
 are not independently release-supported.
 
-The fork implements the ownership and buffer changes below for this supported
-surface. Accumulated independent review and pinned Zubspace acceptance remain
-required before recording RUSTSEC-2025-0035 as remediated. This is not an advisory
-suppression or a patched-version claim for published upstream releases.
+The tested source revision is
+[`ea02ddd91439fb1c5024f0dc062c6a04b1f3d271`](https://github.com/pkieltyka/macroquad/tree/ea02ddd91439fb1c5024f0dc062c6a04b1f3d271),
+published on `zubspace-reviewed-ea02ddd`. Its scoped ownership and buffer
+remediation passed independent and accumulated review, including the LP64 XDND
+writer correction in `4f9022c`. All four jobs in
+[the fork CI run](https://github.com/pkieltyka/macroquad/actions/runs/38994560847)
+passed: supported targets, Rust 1.88, and Miri on x86_64/i686. Pinned Zubspace acceptance is recorded separately below and in the ledger. This is not advisory suppression or a
+patched-version claim for published upstream releases.
 
 | Source | Finding in upstream base `8d602d3` | Fork disposition |
 | --- | --- | --- |
@@ -196,11 +200,62 @@ part of this fork's supported build. Their Macroquad development dependency and
 raw-renderer/particle/tree examples are removed. Custom material, UI, text,
 tiled and platformer examples remain build targets.
 
-Zubspace's test-only LVZ image constructor needs the `Image::from_rgba8`
-migration; its renderer uses `Texture2D::from_rgba8`. Its direct Miniquad calls
-are `date::now` and remain available. Its WASM voice and LVZ paths require the
-retained coroutine/audio API. Its dynamic sound queue replacements must drain
-and cancel old Copy handles instead of only clearing their vectors.
+Zubspace integration `725dd5d` migrates the LVZ image constructor/accessors and
+explicitly cancels retired arena/LVZ sound tasks rather than merely dropping
+Copy handles. Its renderer uses `Texture2D::from_rgba8`, and its direct Miniquad
+clock calls remain available. Actual game LVZ/bot audio and library sound
+play/stop/cancel/failure evidence must be distinguished from legacy received
+voice: that module has no current game UI upload caller/server relay handler,
+so native protocol checks do not establish human voice end-to-end acceptance.
+
+Application source64c8f58 fixed the independently reproduced respawn handoff,
+passed its actual strict renewal and retained17 successful continuation
+invocations. A later genuine maxed Ship admission failure (Javelin1200 versus
+required2000) required production repair
+`fb3fbd3928a20416fdde1234a8a327df9e483381`, now committed after three fresh
+reviews and matching source tests. Separately negotiated Ship support, observer
+capability discovery and explicit Ship freezing preserve spectator return and
+initial playable joins; this is not an admission/policy relaxation.
+
+Actual fb3 objective retries and all targeted Ship renewals passed, including
+strict life2 energy2000 admission without RTC rejoin. Current source tuple is
+compiled client `c975ae2634573605725107ebfcffc0785d632f3a`, fixture delivery
+`6167ac530c2d5dfa963ad12cb5ecb1e9190ad049`, with byte-unchanged native server
+`ec9090fdc50734b6edaef930b12d70a684fcaab1`. The new f2f39d8 client/retained
+551c68 server image pair passed actual isolated Compose, independent verification
+and complete owned0→1→0 cleanup. This is bounded RTC/package evidence.
+
+[The patch ledger](patch-ledger.md#intermediate-application-acceptance-checkpoints)
+records separate source/image tuples and original REDs. The c975 forced-reorder
+retry passed all12 strict predicates on first poll with a21-file/three-QA audit.
+Chrome's hostile two-bot run now supplies actual observed child-explosion proof:
+child97/type15 dealt400 damage, energy293→0, to victim768/life2, bound to the
+observed parent91 commit5881 and actual uploaded/GET-verified QA attachment.
+The generic verifier covers14 files/one QA; `qaTraceChildAudit` remains null.
+The earlier unexercised-child limitation is resolved by new live observation,
+not source-only recapture, offline lineage or promotion of primary-only history.
+
+Firefox two-bot renewal passed full13-file/one-QA verification, primary-only.
+A separate genuine-input QA upload/GET primitive-JSON probe passed14-file/one-QA
+verification and exact whole-JSON/raw-byte equality; it makes no child claim.
+Earlier nonlethal/exact-upload identity REDs remain preserved. Reviewed fixture
+corrections preserve exact checks and all ten compiled artifacts. The original DEBUG high-refresh aggregate remains RED; its
+single supported release Firefox Extreme renewal passed full independent
+five-file/two-QA verification. Private reviewed user integration2008 now passed
+all four bounded browser cells, including one affected mixed renewal with two
+strict wire/gameplay cycles and complete RTC drain. Its initial external-adapter
+cleanup RED remains archived. The fixed09:49 snapshot does not cover later user
+commits. Reviewed fixture-only private branchf1afd7/treecd57 adds no production
+delta; accepted application artifacts/browser cells remain compiled2008.
+All five remaining focused delivery stages passed full verification, with
+headed Firefox20 explicitly renewing the failed headless-GL startup case. Eight
+cadence/two startup cells passed independent verification with immutable inputs;
+Chrome Extreme measured14.50% lower cadence, a material concern with dynamic
+workload equivalence not established (early accepted versus late rejected
+respawn). Measurement/reporting is complete, without isolated library attribution.
+Final documentary review is a separate handoff step; measurement success is not
+a performance-parity or security-wide proof. Macroquad's published source and CI remain at ea02ddd; no
+official advisory-wide closure or universal-platform claim follows here.
 
 ## Remaining unsafe code and foreign contracts
 
@@ -223,8 +278,8 @@ the reachable supported paths, not every platform in their source trees.
 Miniquad is private behind the facade; initialization and backend access are
 confined above. The narrow vendored fixes cover deletion-cache invalidation,
 non-owning render passes, checked/null-safe X11 property copies and clipboard
-state, null-safe GL version discovery, WebGL capability detection and WebGL2
-depth formats. [Vendor provenance](../vendor/README.md) records exact patches and
+state, native-long XDND format-32 writes, null-safe GL version discovery, WebGL
+capability detection and WebGL2 depth formats. [Vendor provenance](../vendor/README.md) records exact patches and
 reconstruction checks. Texture transfers/readback and uniform metadata are
 validated in Macroquad before their unsafe dependency boundaries.
 
@@ -288,3 +343,13 @@ an active visible tab; the runner explicitly selects X11 in the Firefox driver
 process environment so a host Wayland session cannot move it off the isolated
 test display. It records visibility and actual animation frames without replacing
 browser scheduling.
+
+
+The retained core interpreter runs used nightly-2026-10-16 with57 passing tests
+and one existing ignore on each of x86_64/i686; leak checking stayed enabled.
+Actual-helper X11/XDND Miri and real native/browser FFI fixtures supplement that
+CPU evidence. The native-long writer's old allocation failed the interpreter
+before correction; no fabricated replacement helper supplied that regression.
+These checks address the supported fork contracts; they do not declare an
+official upstream patched version, context restoration, arbitrary foreign hosts
+or dormant human-voice relay paths supported.

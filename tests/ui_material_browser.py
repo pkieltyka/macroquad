@@ -56,7 +56,7 @@ def validate_audio_unlock(result, gesture_sent):
         raise AssertionError("Audio context did not resume to running after the trusted gesture")
 
 
-def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30, force_dpr1=False, exercise=None, expected_failure=None):
+def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30, force_dpr1=False, exercise=None, expected_failure=None, headed=False):
     driver_env = os.environ.copy()
     if browser == "chrome":
         binary = os.environ.get("CHROME_BIN") or shutil.which("google-chrome") or shutil.which("chromium")
@@ -65,6 +65,8 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
             "args": ["--headless=new", "--no-sandbox", "--disable-dev-shm-usage",
                      "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
         }}
+        if headed:
+            options["goog:chromeOptions"]["args"].remove("--headless=new")
         if force_dpr1:
             options["goog:chromeOptions"]["args"].append("--force-device-scale-factor=1")
         command = [os.environ.get("CHROMEDRIVER_BIN", "chromedriver"), "--port=0"]

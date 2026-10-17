@@ -70,7 +70,7 @@ def settled_event(port, session, event=None):
     script = """
 const done = arguments[arguments.length - 1];
 const event = arguments[0];
-(event ? inputWake(event.type, event.ids) : inputIdle()).then(
+(event ? inputWake(event.type, event.ids, event.touches ?? null) : inputIdle()).then(
     result => done(JSON.stringify(result)),
     error => done(JSON.stringify({error: String(error)})));
 """
@@ -190,6 +190,27 @@ def exercise_all(port, session):
             result,
         )
         return result
+
+    # Labelled synthetic missing-terminal recovery; touches is authoritative.
+    check("syntheticTouch('touchstart',[71]);", True)
+    recovered = check("syntheticTouch('touchstart',[72],[72]);", True)
+    assert recovered["touches"][-2:] == [{"phase":"Started","id":72},{"phase":"Cancelled","id":71}], recovered
+    check("syntheticTouch('touchcancel',[72],[]);", False, 1)
+    check("syntheticTouch('touchcancel',[71],[]); syntheticTouch('touchend',[72],[]);", False)
+    check("syntheticTouch('touchstart',[81,82]);", True)
+    survivor = check("syntheticTouch('touchstart',[83],[82,83,99]);", True)
+    assert survivor["touches"][-1] == {"phase":"Cancelled","id":81}, survivor
+    check("syntheticTouch('touchcancel',[83],[82,99]);", True)
+    check("syntheticTouch('touchcancel',[82],[99]);", False, 1)
+    # An unrelated contact in touches is not adopted as a simulated owner.
+    check("syntheticTouch('touchmove',[99],[]); syntheticTouch('touchstart',[84],[84]);", True)
+    check("syntheticTouch('touchcancel',[84],[]);", False, 1)
+    check("syntheticTouch('touchstart',[85,86]);", True)
+    ended = check("syntheticTouch('touchend',[85],[]);", False, 1)
+    assert ended["touches"][-2:] == [{"phase":"Ended","id":85},{"phase":"Cancelled","id":86}], ended
+    check("syntheticMouse('mousedown'); syntheticTouch('touchstart',[91]);", True)
+    check("syntheticTouch('touchstart',[92],[92]); syntheticTouch('touchcancel',[92],[]);", True)
+    check("syntheticMouse('mouseup',0,window);", False, 1)
 
     check(
         "syntheticMouse('mouseup',0,document.getElementById('other')); syntheticMouse('mouseup',0,window);",
@@ -371,10 +392,72 @@ def exercise_touch_wake(port, session):
         )
         assert not result["flags"] & 1 and ups(result) == before + int(enabled), result
 
+    # Missing-owner recovery must also wake from a freshly idle blocking loop.
+    execute(port, session, "wasm_exports.input_simulate(true);")
+    flush(port, session)
+    settled_event(port, session, {"type":"touchstart","ids":[63]})
+    wait(port, session, lambda r: r["flags"] & 1, "missing-touch initial owner")
+    trial = settled_event(port, session, {"type":"touchstart","ids":[64],"touches":[64]})
+    recovered = wait(port, session, lambda r: len(r["frames"]) > trial["before"]["frameCount"]
+                     and r["touches"][-1] == {"phase":"Cancelled","id":63}, "fresh new touch reconciles stale owner")
+    assert recovered["flags"] & 1, recovered
+    before = ups(recovered)
+    trial = settled_event(port, session, {"type":"touchcancel","ids":[64],"touches":[]})
+    result = wait(port, session, lambda r: len(r["frames"]) > trial["before"]["frameCount"]
+                  and not r["flags"] & 1 and ups(r)==before+1, "fresh cancellation releases last recovered owner")
+
+
+
+def exercise_native_menu(port, session):
+    wait(port, session, lambda r: r.get("ready"), "native menu ready")
+    execute(port, session, "document.querySelector('canvas').focus();")
+    trials = []
+    for shift in [False, True]:
+        before = snapshot(port, session)
+        idle = settled_event(port, session)
+        if shift:
+            driver.request(port, "POST", f"/session/{session}/actions", {"actions":[{"type":"key","id":"menu-key","actions":[{"type":"keyDown","value":"\ue008"}]}]})
+        actions(port, session, [
+            {"type":"pointerMove","x":70,"y":80,"duration":0},
+            {"type":"pointerDown","button":2}, {"type":"pointerUp","button":2},
+        ])
+        opened = snapshot(port, session)
+        driver.request(port, "POST", f"/session/{session}/actions", {"actions":[{"type":"key","id":"menu-key","actions":[
+            {"type":"keyDown","value":"\ue00c"}, {"type":"keyUp","value":"\ue00c"},
+        ] + ([{"type":"keyUp","value":"\ue008"}] if shift else [])}]})
+        after = flush(port, session)
+        audit = after["nativeAudit"][len(before["nativeAudit"]):]
+        assert any(e["type"]=="mousedown" and e["button"]==2 and e["trusted"] for e in audit), audit
+        assert any(e["type"]=="mouseup" and e["button"]==2 and e["trusted"] for e in audit), audit
+        assert all(not e["defaultPrevented"] for e in audit if e["type"]=="contextmenu"), audit
+        assert not after["flags"] & 2 and ups(after)==ups(before)+1, after
+        assert len(after["frames"]) > idle["frameCount"], after
+        trials.append({"shift":shift,"beforeFlags":before["flags"],"openedFlags":opened["flags"],
+                       "afterEscapeFlags":after["flags"],"freshFrames":len(after["frames"])-idle["frameCount"],"audit":audit})
+    execute(port, session, "evidence.nativeMenuTrials=arguments[0];", [trials])
+    print("native menu probe: " + json.dumps(trials), flush=True)
+
+
+def exercise_lost_touch(port, session):
+    wait(port, session, lambda r: r.get("ready"), "lost touch ready")
+    execute(port, session, "syntheticTouch('touchstart',[71]);")
+    first = flush(port, session)
+    assert first["flags"] & 1, first
+    # No A terminal is delivered; B's next authoritative touches omits A.
+    execute(port, session, "syntheticTouch('touchstart',[72],[72]);")
+    second = flush(port, session)
+    assert second["flags"] & 1, second
+    execute(port, session, "syntheticTouch('touchcancel',[72],[]);")
+    final = flush(port, session)
+    execute(port, session, "evidence.lostTouchTrial={source:'synthetic DOM',beforeFlags:arguments[0],afterNewStartFlags:arguments[1],afterCancelFlags:arguments[2]};", [first["flags"],second["flags"],final["flags"]])
+    assert not final["flags"] & 1, final
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", action="store_true")
+    parser.add_argument("--termination-probe", action="store_true")
+    parser.add_argument("--wake-only", action="store_true")
     parser.add_argument("--browser", choices=("chrome", "firefox"))
     parser.add_argument("--output", type=Path, default=ROOT / "target/browser-input")
     args = parser.parse_args()
@@ -389,8 +472,8 @@ def main():
         + " -C link-arg=--allow-undefined"
     )
     artifacts = {}
-    for version in (1, 2):
-        for touch_wake in ([False] if args.baseline else [False, True]):
+    for version in ([1] if args.termination_probe else [1, 2]):
+        for touch_wake in ([True] if args.wake_only else [False] if args.baseline or args.termination_probe else [False, True]):
             features = (["webgl2"] if version == 2 else []) + (
                 ["touch-wake"] if touch_wake else []
             )
@@ -469,6 +552,7 @@ def main():
     failures = []
     try:
         cells = (
+            [("chrome", 1), ("firefox", 1)] if args.termination_probe else
             [("chrome", 1)]
             if args.baseline
             else [(b, v) for b in ("chrome", "firefox") for v in (1, 2)]
@@ -477,6 +561,8 @@ def main():
             if args.browser and browser != args.browser:
                 continue
             for name, exercise in (
+                [("touch-wake", exercise_touch_wake)] if args.wake_only else
+                [("native-menu", exercise_native_menu), ("lost-touch", exercise_lost_touch)] if args.termination_probe else
                 [("outside", outside), ("synthetic-cancel", cancel)]
                 if args.baseline
                 else [
@@ -492,7 +578,7 @@ def main():
                 wasm = "/" + (output / f"{artifact}.wasm").relative_to(ROOT).as_posix()
                 url = (
                     f"http://127.0.0.1:{server.server_port}/tests/browser_input/case.html?"
-                    + urllib.parse.urlencode({"wasm": wasm})
+                    + urllib.parse.urlencode({"wasm": wasm, "nativeMenu": "1" if name == "native-menu" else "0"})
                 )
 
                 def run(port, session):
@@ -517,6 +603,7 @@ def main():
                         check_ui=False,
                         force_dpr1=True,
                         exercise=run,
+                        headed=name == "native-menu",
                     )
                 except Exception as error:
                     failures.append(f"{browser} WebGL{version} {name}: {error}")

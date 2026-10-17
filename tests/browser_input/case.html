@@ -2,7 +2,7 @@
 <style>html,body {margin:0} #glcanvas {position:absolute;left:40px;top:40px;width:160px;height:120px} #other {position:absolute;left:300px;top:200px}</style>
 <canvas id="glcanvas" width="160" height="120" tabindex="1"></canvas><button id="other">Other control</button>
 <script>
-window.evidence={messages:[],errors:[],completed:false,events:[],touches:[],focus:[],domFocus:[],frames:[],trusted:[],synthetic:[],wakeTrials:[],ready:false};
+window.evidence={messages:[],errors:[],completed:false,events:[],touches:[],focus:[],domFocus:[],frames:[],trusted:[],synthetic:[],nativeAudit:[],wakeTrials:[],ready:false};
 let domFocused=document.hasFocus()&&document.visibilityState==="visible";
 const observeFocus=event=>{
  const focused=document.hasFocus()&&document.visibilityState==="visible";
@@ -28,8 +28,8 @@ window.inputIdle=()=>new Promise((resolve,reject)=>{
  };
  nativeFrame(inspect);
 });
-window.inputWake=(type,ids)=>inputIdle().then(before=>{
- syntheticTouch(type,ids);
+window.inputWake=(type,ids,touches=null)=>inputIdle().then(before=>{
+ syntheticTouch(type,ids,touches);
  const after={pending:pendingFrames.size,requests:requestedFrames};
  const trial={type,ids,source:"synthetic DOM",before,after};evidence.wakeTrials.push(trial);
  if(before.pending!==0||after.requests<=before.requests||after.pending===0)throw new Error("Fresh event did not schedule a blocking frame");
@@ -50,11 +50,12 @@ for(const level of ["log","info","warn","error"]) {
 }
 for(const name of ["mousedown","mouseup"]) window.addEventListener(name,event=>evidence.trusted.push({type:name,trusted:event.isTrusted,onCanvas:event.target.id==="glcanvas"}));
 const activeTouches=new Set();
-window.syntheticTouch=(type,ids)=>{
+window.syntheticTouch=(type,ids,presentIds=null)=>{
  for(const id of ids) {
   if(type==="touchstart")activeTouches.add(id);
   if(type==="touchend"||type==="touchcancel")activeTouches.delete(id);
  }
+ if(presentIds!==null){activeTouches.clear();for(const id of presentIds)activeTouches.add(id);}
  const event=new Event(type,{bubbles:true,cancelable:true});
  const contacts=values=>Array.from(values,identifier=>({identifier,clientX:70,clientY:80}));
  Object.defineProperties(event,{changedTouches:{value:contacts(ids)},touches:{value:contacts(activeTouches)}});
@@ -77,7 +78,20 @@ window.syntheticRawMotion=()=>{
  const event=new MouseEvent("mousemove",{clientX:600,clientY:600});Object.defineProperties(event,{movementX:{value:7},movementY:{value:-3}});
  document.querySelector("canvas").dispatchEvent(event);
 };
-document.querySelector("canvas").addEventListener("contextmenu",event=>{event.preventDefault();evidence.contextMenus=(evidence.contextMenus||0)+1;});
+const nativeMenu=new URLSearchParams(location.search).get("nativeMenu")==="1";
+for(const type of ["mousedown","mouseup","contextmenu","keydown","keyup","blur","focus","visibilitychange"]) {
+ const target=type==="visibilitychange"?document:window;
+ target.addEventListener(type,event=>{
+  const record={type,trusted:event.isTrusted,button:event.button??null,key:event.key??null,
+   shift:event.shiftKey??false,focused:document.hasFocus(),visibility:document.visibilityState,
+   defaultPrevented:event.defaultPrevented,time:performance.now()};
+  evidence.nativeAudit.push(record);
+  queueMicrotask(()=>{record.defaultPrevented=event.defaultPrevented;});
+ },true);
+}
+document.querySelector("canvas").addEventListener("contextmenu",event=>{
+ if(!nativeMenu)event.preventDefault();evidence.contextMenus=(evidence.contextMenus||0)+1;
+});
 window.armGrab=()=>document.querySelector("canvas").addEventListener("mousedown",()=>wasm_exports.input_grab(true),{once:true});
 window.onerror=value=>evidence.errors.push(String(value));
 window.onunhandledrejection=event=>evidence.errors.push(String(event.reason));

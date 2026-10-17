@@ -64,6 +64,7 @@ test("vendored base and deterministic patches reproduce the checked-in bundle", 
   assert.equal(sha256(base), "4bf663a44a06c113bed92e0596c58139cd9db7f0d67ef2cc49ca06016e0b5ea0");
   assert.equal(regenerateBundle(base), sources.bundle);
   assert.throws(() => regenerateBundle(`${base}${base}`), /anchor must occur exactly once/);
+  assert.throws(() => regenerateBundle(base.replace('canvas.addEventListener("touchstart",', 'canvas.addEventListener("missing-touchstart",')), /touch input anchors are missing/);
   assert.throws(() => regenerateBundle(base.replace('console.log("fix")', 'console.log("changed")')), /quiet audio unlock/);
 });
 
@@ -363,6 +364,7 @@ function inputRuntime() {
     mouse_move: (...args) => calls.push(["move", ...args]),
     raw_mouse_move: (...args) => calls.push(["raw", ...args]),
     focus: value => calls.push(["focus", value]),
+    touch: (...args) => calls.push(["touch", ...args]),
   };
   runtime.importObject.env.run_animation_loop(true);
   return {runtime,canvas,document,window,calls,blur() {focused=false; window.emit("blur");}};
@@ -395,4 +397,53 @@ test("owned release keeps existing relative coordinates and raw movement under p
   canvas.onmousemove({...mouseEvent(),movementX:7,movementY:-3});
   window.emit("mouseup",mouseEvent(0,80,100));
   assert.deepEqual(calls, [["down",30,50,0],["move",30,50],["raw",7,-3],["up",40,70,0]]);
+});
+
+
+const touchEvent = (changed, present) => ({
+  preventDefault() {},
+  changedTouches: changed.map(([identifier, clientX=70, clientY=80]) => ({identifier,clientX,clientY})),
+  touches: present.map(identifier => ({identifier})),
+});
+
+test("later touch lists cancel only missing owned IDs at their last position", () => {
+  const {canvas,calls} = inputRuntime();
+  canvas.emit("touchstart",touchEvent([[71]],[71]));
+  canvas.emit("touchmove",touchEvent([[71,75,85]],[71,99]));
+  canvas.emit("touchstart",touchEvent([[72,80,90]],[72,99]));
+  canvas.emit("touchcancel",touchEvent([[72]],[]));
+  assert.deepEqual(calls, [["touch",10,71,30,50],["touch",11,71,35,55],
+    ["touch",10,72,40,60],["touch",13,71,35,55],["touch",13,72,30,50]]);
+});
+
+test("explicit Ended precedes missing-owner cancellation and unrelated contacts are never adopted", () => {
+  const {canvas,calls} = inputRuntime();
+  canvas.emit("touchstart",touchEvent([[1],[2]],[1,2,99]));
+  canvas.emit("touchend",touchEvent([[1]],[]));
+  canvas.emit("touchmove",touchEvent([[99]],[]));
+  assert.deepEqual(calls, [["touch",10,1,30,50],["touch",10,2,30,50],
+    ["touch",12,1,30,50],["touch",13,2,30,50],["touch",11,99,30,50]]);
+});
+
+test("surviving owned IDs are retained and blur discards stale JS ownership", () => {
+  const {canvas,calls,blur} = inputRuntime();
+  canvas.emit("touchstart",touchEvent([[1],[2]],[1,2]));
+  canvas.emit("touchcancel",touchEvent([[2]],[1]));
+  blur();
+  canvas.emit("touchstart",touchEvent([[3]],[3]));
+  canvas.emit("touchcancel",touchEvent([[3]],[]));
+  assert.deepEqual(calls, [["touch",10,1,30,50],["touch",10,2,30,50],
+    ["touch",13,2,30,50],["focus",false],["touch",10,3,30,50],["touch",13,3,30,50]]);
+});
+
+
+test("missing synthetic touches lists are not authoritative and duplicate terminals do not invent stale cancellations", () => {
+  const {canvas,calls} = inputRuntime();
+  canvas.emit("touchstart",touchEvent([[1]],[1]));
+  const legacy = touchEvent([[2]],[2]); delete legacy.touches;
+  canvas.emit("touchstart",legacy);
+  canvas.emit("touchcancel",touchEvent([[2]],[]));
+  canvas.emit("touchcancel",touchEvent([[2]],[]));
+  assert.deepEqual(calls, [["touch",10,1,30,50],["touch",10,2,30,50],
+    ["touch",13,2,30,50],["touch",13,1,30,50],["touch",13,2,30,50]]);
 });

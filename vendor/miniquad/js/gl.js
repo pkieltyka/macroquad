@@ -146,6 +146,46 @@ function setup_owned_mouse_input() {
     };
 }
 
+// A missing terminal event cannot be detected immediately. A later TouchEvent's
+// complete touches list can retire contacts whose start this canvas owned.
+function setup_owned_touch_input() {
+    const ownedTouches = new Map();
+    for (const [name, phase] of [
+        ["touchstart", SAPP_EVENTTYPE_TOUCHES_BEGAN],
+        ["touchend", SAPP_EVENTTYPE_TOUCHES_ENDED],
+        ["touchcancel", SAPP_EVENTTYPE_TOUCHES_CANCELED],
+        ["touchmove", SAPP_EVENTTYPE_TOUCHES_MOVED],
+    ]) {
+        canvas.addEventListener(name, function (event) {
+            event.preventDefault();
+            // Deliver explicit changes first, including legacy Ended semantics.
+            // New owners must exist before stale cancellation so a surviving new
+            // contact continues to hold the simulated mouse.
+            for (const touch of event.changedTouches) {
+                const position = mouse_relative_position(touch.clientX, touch.clientY);
+                if (name === "touchstart" || (name === "touchmove" && ownedTouches.has(touch.identifier))) {
+                    ownedTouches.set(touch.identifier, position);
+                } else if (name === "touchend" || name === "touchcancel") {
+                    ownedTouches.delete(touch.identifier);
+                }
+                wasm_exports.touch(phase, touch.identifier, position.x, position.y);
+            }
+            // Real TouchEvents always supply touches; tolerate older synthetic
+            // callers without treating a missing list as authoritative emptiness.
+            if (event.touches == null) return;
+            const present = new Set(Array.from(event.touches, touch => touch.identifier));
+            for (const [identifier, position] of ownedTouches) {
+                if (present.has(identifier)) continue;
+                ownedTouches.delete(identifier);
+                wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_CANCELED, identifier, position.x, position.y);
+            }
+        });
+    }
+    // Rust's existing focus(false) path terminates touch simulation on blur.
+    // Discard the mirror before that notification, without duplicate callbacks.
+    return () => ownedTouches.clear();
+}
+
 canvas.focus();
 
 canvas.requestPointerLock = canvas.requestPointerLock ||
@@ -1228,6 +1268,7 @@ var importObject = {
         },
         run_animation_loop: function (blocking) {
             var releaseOwnedMouseButtons = setup_owned_mouse_input();
+            var clearOwnedTouches = setup_owned_touch_input();
             // SO WEB SO CONSISTENT
             canvas.addEventListener('wheel',
                 function (event) {
@@ -1295,39 +1336,6 @@ var importObject = {
                 }
             };
 
-            canvas.addEventListener("touchstart", function (event) {
-                event.preventDefault();
-
-                for (const touch of event.changedTouches) {
-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_BEGAN, touch.identifier, relative_position.x, relative_position.y);
-                }
-            });
-            canvas.addEventListener("touchend", function (event) {
-                event.preventDefault();
-
-                for (const touch of event.changedTouches) {
-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_ENDED, touch.identifier, relative_position.x, relative_position.y);
-                }
-            });
-            canvas.addEventListener("touchcancel", function (event) {
-                event.preventDefault();
-
-                for (const touch of event.changedTouches) {
-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_CANCELED, touch.identifier, relative_position.x, relative_position.y);
-                }
-            });
-            canvas.addEventListener("touchmove", function (event) {
-                event.preventDefault();
-
-                for (const touch of event.changedTouches) {
-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_MOVED, touch.identifier, relative_position.x, relative_position.y);
-                }
-            });
-
             window.onresize = function () {
                 resize(canvas, wasm_exports.resize);
             };
@@ -1392,7 +1400,10 @@ var importObject = {
                 // However, the document becomes invisible
                 let hasFocus = document.hasFocus() && document.visibilityState == "visible";
                 if (lastFocus != hasFocus) {
-                    if (!hasFocus) releaseOwnedMouseButtons();
+                    if (!hasFocus) {
+                        releaseOwnedMouseButtons();
+                        clearOwnedTouches();
+                    }
                     wasm_exports.focus(hasFocus);
                     lastFocus = hasFocus;
                 }

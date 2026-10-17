@@ -19,7 +19,7 @@ function fixture(name, search = "") {
   }
   const addEventListener = (name, callback) => listeners.set(name, [...(listeners.get(name) ?? []), callback]);
   const context = vm.createContext({
-    URLSearchParams, location: { search }, performance: { now: () => clock },
+    URLSearchParams, queueMicrotask, location: { search }, performance: { now: () => clock },
     HTMLCanvasElement: Canvas, WebGLRenderingContext: GL, WebGL2RenderingContext: class extends GL {},
     console: Object.fromEntries(["log", "info", "warn", "error"].map(name => [name, () => {}])),
     Event: SyntheticEvent, MouseEvent: SyntheticEvent, KeyboardEvent: SyntheticEvent,
@@ -104,4 +104,24 @@ test("a pending old frame cannot satisfy a fresh-event blocking wake assertion",
       assert.equal(f.context.evidence.frames.length, 2);
     }
   }
+});
+
+
+test("native-menu audit records late default prevention without suppressing the menu", async () => {
+  const f = fixture("browser_input", "?nativeMenu=1");
+  const event = {type:"contextmenu",isTrusted:true,button:2,defaultPrevented:false};
+  f.emit("contextmenu",event);
+  event.defaultPrevented = true;
+  await Promise.resolve();
+  assert.equal(f.context.evidence.nativeAudit[0].trusted,true);
+  assert.equal(f.context.evidence.nativeAudit[0].defaultPrevented,true);
+});
+
+test("labelled lost-terminal fixture can provide a later authoritative touches list", () => {
+  const f = fixture("browser_input");
+  f.context.syntheticTouch("touchstart",[71]);
+  f.context.syntheticTouch("touchstart",[72],[72]);
+  f.context.syntheticTouch("touchcancel",[72],[]);
+  assert.deepEqual(f.events.map(event=>Array.from(event.touches,touch=>touch.identifier)),[[71],[72],[]]);
+  assert.deepEqual(f.events.map(event=>Array.from(event.changedTouches,touch=>touch.identifier)),[[71],[72],[72]]);
 });

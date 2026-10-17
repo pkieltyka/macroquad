@@ -35,18 +35,16 @@
 
          function acquireVertexArrayObjectExtension(ctx) {
              // Extension available in WebGL 1 from Firefox 25 and WebKit 536.28/desktop Safari 6.0.3 onwards. Core feature in WebGL 2.
-@@ -88,11 +111,39 @@
+@@ -88,11 +111,79 @@
              alert("Cant initialize WEBGL_depth_texture extension");
          }
      } else {
 -        gl = canvas.getContext("webgl2");
--    }
--    if (gl === null) {
--        alert("Unable to initialize WebGL. Your browser or machine may not support it.");
--    }
 +        gl = createContext("webgl2");
 +        if (gl === null) throw new Error("Unable to initialize required WebGL2");
-+    }
+     }
+-    if (gl === null) {
+-        alert("Unable to initialize WebGL. Your browser or machine may not support it.");
 +}
 +
 +// Adapted from Miniquad #602 (TheRedDeveloper, 876e2fb92fa5339071dbaf5d3ef40df4f8901bb7):
@@ -77,10 +75,50 @@
 +            wasm_exports.mouse_up(lastPosition.x, lastPosition.y, into_sapp_mousebutton(button));
 +        }
 +    };
++}
++
++// A missing terminal event cannot be detected immediately. A later TouchEvent's
++// complete touches list can retire contacts whose start this canvas owned.
++function setup_owned_touch_input() {
++    const ownedTouches = new Map();
++    for (const [name, phase] of [
++        ["touchstart", SAPP_EVENTTYPE_TOUCHES_BEGAN],
++        ["touchend", SAPP_EVENTTYPE_TOUCHES_ENDED],
++        ["touchcancel", SAPP_EVENTTYPE_TOUCHES_CANCELED],
++        ["touchmove", SAPP_EVENTTYPE_TOUCHES_MOVED],
++    ]) {
++        canvas.addEventListener(name, function (event) {
++            event.preventDefault();
++            // Deliver explicit changes first, including legacy Ended semantics.
++            // New owners must exist before stale cancellation so a surviving new
++            // contact continues to hold the simulated mouse.
++            for (const touch of event.changedTouches) {
++                const position = mouse_relative_position(touch.clientX, touch.clientY);
++                if (name === "touchstart" || (name === "touchmove" && ownedTouches.has(touch.identifier))) {
++                    ownedTouches.set(touch.identifier, position);
++                } else if (name === "touchend" || name === "touchcancel") {
++                    ownedTouches.delete(touch.identifier);
++                }
++                wasm_exports.touch(phase, touch.identifier, position.x, position.y);
++            }
++            // Real TouchEvents always supply touches; tolerate older synthetic
++            // callers without treating a missing list as authoritative emptiness.
++            if (event.touches == null) return;
++            const present = new Set(Array.from(event.touches, touch => touch.identifier));
++            for (const [identifier, position] of ownedTouches) {
++                if (present.has(identifier)) continue;
++                ownedTouches.delete(identifier);
++                wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_CANCELED, identifier, position.x, position.y);
++            }
++        });
+     }
++    // Rust's existing focus(false) path terminates touch simulation on blur.
++    // Discard the mirror before that notification, without duplicate callbacks.
++    return () => ownedTouches.clear();
  }
 
  canvas.focus();
-@@ -1176,41 +1227,13 @@
+@@ -1176,41 +1267,14 @@
              resize(canvas);
          },
          run_animation_loop: function (blocking) {
@@ -106,6 +144,7 @@
 -                wasm_exports.mouse_down(x, y, btn);
 -            };
 +            var releaseOwnedMouseButtons = setup_owned_mouse_input();
++            var clearOwnedTouches = setup_owned_touch_input();
              // SO WEB SO CONSISTENT
              canvas.addEventListener('wheel',
                  function (event) {
@@ -123,15 +162,58 @@
              canvas.onkeydown = function (event) {
                  var sapp_key_code = into_sapp_keycode(event.code);
                  switch (sapp_key_code) {
-@@ -1369,6 +1392,7 @@
+@@ -1272,39 +1336,6 @@
+                 }
+             };
+
+-            canvas.addEventListener("touchstart", function (event) {
+-                event.preventDefault();
+-
+-                for (const touch of event.changedTouches) {
+-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
+-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_BEGAN, touch.identifier, relative_position.x, relative_position.y);
+-                }
+-            });
+-            canvas.addEventListener("touchend", function (event) {
+-                event.preventDefault();
+-
+-                for (const touch of event.changedTouches) {
+-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
+-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_ENDED, touch.identifier, relative_position.x, relative_position.y);
+-                }
+-            });
+-            canvas.addEventListener("touchcancel", function (event) {
+-                event.preventDefault();
+-
+-                for (const touch of event.changedTouches) {
+-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
+-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_CANCELED, touch.identifier, relative_position.x, relative_position.y);
+-                }
+-            });
+-            canvas.addEventListener("touchmove", function (event) {
+-                event.preventDefault();
+-
+-                for (const touch of event.changedTouches) {
+-                    let relative_position = mouse_relative_position(touch.clientX, touch.clientY);
+-                    wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_MOVED, touch.identifier, relative_position.x, relative_position.y);
+-                }
+-            });
+-
+             window.onresize = function () {
+                 resize(canvas, wasm_exports.resize);
+             };
+@@ -1369,6 +1400,10 @@
                  // However, the document becomes invisible
                  let hasFocus = document.hasFocus() && document.visibilityState == "visible";
                  if (lastFocus != hasFocus) {
-+                    if (!hasFocus) releaseOwnedMouseButtons();
++                    if (!hasFocus) {
++                        releaseOwnedMouseButtons();
++                        clearOwnedTouches();
++                    }
                      wasm_exports.focus(hasFocus);
                      lastFocus = hasFocus;
                  }
-@@ -1458,7 +1482,8 @@
+@@ -1458,7 +1493,8 @@
              }
              animation_frame_timeout = window.requestAnimationFrame(animation);
          },

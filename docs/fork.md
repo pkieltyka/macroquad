@@ -114,6 +114,15 @@ do not replace that game integration checkpoint.
 ## Reproduce the fork checks
 
 The authoritative automation is [the workflow](../.github/workflows/rust.yml).
+It runs on pushes (including tags) and pull requests. To request the same checks
+manually, use GitHub Actions → Supported fork checks → Run workflow, or:
+
+```sh
+gh workflow run rust.yml --repo pkieltyka/macroquad --ref master
+```
+
+Manual dispatch becomes available once this workflow is on the default branch;
+`--ref` selects the branch or tag to check. These events run the validation jobs.
 Install Linux X11/GL development libraries, ALSA development libraries for native
 audio, Xvfb and the WASM Rust target. Browser fixtures additionally require
 Chrome/chromedriver and Firefox/geckodriver with a working graphics display.

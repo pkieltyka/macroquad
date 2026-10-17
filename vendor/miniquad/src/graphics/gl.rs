@@ -72,6 +72,18 @@ struct Texture {
 }
 
 impl TextureFormat {
+    fn texture_format(self, webgl2: bool) -> (GLenum, GLenum, GLenum) {
+        let (internal, format, pixel_type) = self.into();
+        // WebGL2 requires a sized depth internal format. WebGL1's depth
+        // extension retains the unsized format/type combination.
+        let internal = if webgl2 && self == TextureFormat::Depth {
+            GL_DEPTH_COMPONENT16
+        } else {
+            internal
+        };
+        (internal, format, pixel_type)
+    }
+
     fn sized_internal_format(&self) -> GLenum {
         match self {
             TextureFormat::RGB8 => GL_RGB8,
@@ -189,7 +201,9 @@ impl Texture {
                 "Multisampling is only supported for render textures"
             );
         }
-        let (internal_format, format, pixel_type) = params.format.into();
+        let (internal_format, format, pixel_type) = params
+            .format
+            .texture_format(ctx.info.gl_version_string.starts_with("WebGL 2."));
 
         if access == TextureAccess::RenderTarget && params.sample_count > 1 {
             let mut renderbuffer: u32 = 0;
@@ -330,7 +344,10 @@ impl Texture {
         ctx.cache.store_texture_binding(0);
         ctx.cache.bind_texture(0, self.params.kind.into(), raw);
 
-        let (internal_format, format, pixel_type) = self.params.format.into();
+        let (internal_format, format, pixel_type) = self
+            .params
+            .format
+            .texture_format(ctx.info.gl_version_string.starts_with("WebGL 2."));
 
         self.params.width = width;
         self.params.height = height;
@@ -816,19 +833,31 @@ impl GlContext {
     }
 }
 
-#[allow(clippy::field_reassign_with_default)]
 fn gl_info() -> ContextInfo {
     let version_string = unsafe { glGetString(super::gl::GL_VERSION) };
-    let gl_version_string = unsafe { std::ffi::CStr::from_ptr(version_string as _) }
-        .to_str()
-        .unwrap()
-        .to_string();
+    gl_info_from_version(unsafe { copy_gl_version(version_string) })
+}
+
+/// GL may return null without a current context or after context loss. Any
+/// nonnull pointer must remain a valid NUL-terminated GL string during the copy.
+unsafe fn copy_gl_version(version: *const GLubyte) -> String {
+    if version.is_null() {
+        String::new()
+    } else {
+        std::ffi::CStr::from_ptr(version.cast())
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+#[allow(clippy::field_reassign_with_default)]
+fn gl_info_from_version(gl_version_string: String) -> ContextInfo {
     //let gles2 = !gles3 && gl_version_string.contains("OpenGL ES");
 
     let gl2 = gl_version_string.is_empty()
         || gl_version_string.starts_with("2")
         || gl_version_string.starts_with("OpenGL ES 2");
-    let webgl1 = gl_version_string == "WebGL 1.0";
+    let webgl1 = gl_version_string.starts_with("WebGL 1.");
 
     let features = Features {
         instancing: !gl2,
@@ -1165,17 +1194,12 @@ impl RenderingBackend for GlContext {
 
         unsafe { glDeleteFramebuffers(1, &render_pass.gl_fb as *const _) }
 
-        for color_texture in &render_pass.color_textures {
-            self.delete_texture(*color_texture);
-        }
+        // Attachments belong to their texture owners, matching the Metal
+        // backend. A surviving texture may still be sampled or reattached.
         if let Some(resolves) = render_pass.resolves {
-            for (fb, texture) in resolves {
+            for (fb, _) in resolves {
                 unsafe { glDeleteFramebuffers(1, &fb as *const _) }
-                self.delete_texture(texture);
             }
-        }
-        if let Some(depth_texture) = render_pass.depth_texture {
-            self.delete_texture(depth_texture);
         }
     }
 
@@ -1751,5 +1775,48 @@ impl RenderingBackend for GlContext {
                 num_instances,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    #[test]
+    fn cached_webgl_version_with_vendor_suffix_matches_resolve_support() {
+        for version in [
+            "WebGL 1.0",
+            "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+            "WebGL 1.0 (OpenGL ES 2.0 Firefox)",
+            "",
+        ] {
+            assert!(
+                !gl_info_from_version(version.to_owned())
+                    .features
+                    .resolve_attachments
+            );
+        }
+        for version in ["WebGL 2.0 (OpenGL ES 3.0 Chromium)", "3.3 Mesa"] {
+            assert!(
+                gl_info_from_version(version.to_owned())
+                    .features
+                    .resolve_attachments
+            );
+        }
+    }
+
+    #[test]
+    fn version_copy_accepts_null_context_and_copies_before_storage_changes() {
+        assert_eq!(unsafe { copy_gl_version(std::ptr::null()) }, "");
+        let mut source = b"WebGL 1.0 (vendor)\0".to_vec();
+        let copied = unsafe { copy_gl_version(source.as_ptr()) };
+        source[0] = b'X';
+        assert_eq!(copied, "WebGL 1.0 (vendor)");
+        let non_utf8 = b"WebGL 1.0 (\xff)\0";
+        assert!(
+            !gl_info_from_version(unsafe { copy_gl_version(non_utf8.as_ptr()) })
+                .features
+                .resolve_attachments
+        );
     }
 }

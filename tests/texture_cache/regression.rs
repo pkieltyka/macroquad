@@ -50,6 +50,88 @@ impl Regression {
         }
     }
 
+    fn check_pass_attachments(&mut self, samples: i32, depth: bool) {
+        miniquad::info!(
+            "Checking pass attachments: samples={}, depth={}",
+            samples,
+            depth
+        );
+        let color = self.backend.new_render_texture(TextureParams {
+            width: 32,
+            height: 32,
+            sample_count: samples,
+            ..Default::default()
+        });
+        let resolve = (samples > 1).then(|| {
+            self.backend.new_render_texture(TextureParams {
+                width: 32,
+                height: 32,
+                ..Default::default()
+            })
+        });
+        let depth = depth.then(|| {
+            self.backend.new_render_texture(TextureParams {
+                width: 32,
+                height: 32,
+                sample_count: samples,
+                format: TextureFormat::Depth,
+                ..Default::default()
+            })
+        });
+        let resolves = resolve.map(|texture| [texture]);
+        let output = resolve.unwrap_or(color);
+        for expected in [[255_u8, 0, 0, 255], [0, 0, 255, 255]] {
+            let pass = self.backend.new_render_pass_mrt(
+                &[color],
+                resolves.as_ref().map(|r| &r[..]),
+                depth,
+            );
+            self.backend.begin_pass(
+                Some(pass),
+                PassAction::clear_color(
+                    expected[0] as f32 / 255.,
+                    expected[1] as f32 / 255.,
+                    expected[2] as f32 / 255.,
+                    1.,
+                ),
+            );
+            let status = unsafe { glCheckFramebufferStatus(GL_FRAMEBUFFER) };
+            let error = unsafe { glGetError() };
+            miniquad::info!(
+                "Attachment pass: samples={}, depth={}, framebuffer={:#x}, error={:#x}",
+                samples,
+                depth.is_some(),
+                status,
+                error
+            );
+            assert_eq!(status, GL_FRAMEBUFFER_COMPLETE);
+            assert_eq!(error, GL_NO_ERROR);
+            self.backend.end_render_pass();
+            self.backend.delete_render_pass(pass);
+            // The texture owner outlives the pass. Reuse every attachment in
+            // another pass, and sample the color/resolve after pass deletion.
+            self.backend
+                .begin_default_pass(PassAction::clear_color(0., 0., 0., 1.));
+            self.backend.apply_pipeline(&self.pipeline);
+            self.check_pixel(output, expected);
+            self.backend.end_render_pass();
+            if samples == 1 {
+                if let Some(depth) = depth {
+                    // Resize must preserve the depth allocation format too.
+                    self.backend.texture_resize(depth, 32, 32, None);
+                }
+            }
+        }
+        if let Some(depth) = depth {
+            self.backend.delete_texture(depth);
+        }
+        if let Some(resolve) = resolve {
+            self.backend.delete_texture(resolve);
+        }
+        self.backend.delete_texture(color);
+        assert_eq!(unsafe { glGetError() }, GL_NO_ERROR);
+    }
+
     fn check_pixel(&mut self, texture: TextureId, expected: [u8; 4]) {
         self.bindings.images.clear();
         self.bindings.images.push(texture);
@@ -81,6 +163,17 @@ impl EventHandler for Regression {
             return;
         }
         self.ran = true;
+        miniquad::info!(
+            "Render-pass backend: {}; MSAA resolves {}",
+            self.backend.info().gl_version_string,
+            self.backend.info().features.resolve_attachments
+        );
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(
+            self.backend.info().features.resolve_attachments,
+            cfg!(feature = "webgl2"),
+            "MSAA resolve capability must match the selected WebGL version"
+        );
         self.backend
             .begin_default_pass(PassAction::clear_color(0., 0., 0., 1.));
         self.backend.apply_pipeline(&self.pipeline);
@@ -110,10 +203,20 @@ impl EventHandler for Regression {
             self.backend.delete_texture(replacement);
         }
         self.backend.end_render_pass();
+        let mut attachment_cases = 0;
+        for depth in [false, true] {
+            self.check_pass_attachments(1, depth);
+            attachment_cases += 1;
+            if self.backend.info().features.resolve_attachments {
+                self.check_pass_attachments(4, depth);
+                attachment_cases += 1;
+            }
+        }
         miniquad::info!(
-            "Texture cache regression passed: 32 churn rounds, 128 correct pixels, GL error 0"
+            "Texture cache regression passed: 32 churn rounds, 128 cache pixels, {} surviving attachment cases, GL error 0",
+            attachment_cases
         );
-        window::request_quit();
+        window::order_quit();
     }
 }
 

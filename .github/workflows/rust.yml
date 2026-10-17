@@ -22,11 +22,13 @@ jobs:
           for manifest in Cargo.toml macroquad_macro/Cargo.toml physics-platformer/Cargo.toml profiler/Cargo.toml tiled/Cargo.toml tests/texture_cache/Cargo.toml; do
             cargo +stable fmt --manifest-path "$manifest" -- --check
           done
-          rustfmt +stable --edition 2018 --check vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs
+          rustfmt +stable --edition 2018 --check vendor/miniquad/src/graphics/gl.rs vendor/miniquad/src/graphics/gl/cache.rs vendor/miniquad/src/native/linux_x11/clipboard.rs
       - name: Verify the published backend source and narrow patch
         run: python3 tools/vendor_miniquad.py
-      - name: Check deleted-texture cache invariants
-        run: CARGO_TARGET_DIR=target/miniquad-tests cargo +stable test --manifest-path vendor/miniquad/Cargo.toml --locked --lib texture_deletion_tests
+      - name: Check backend cache and property boundaries
+        run: CARGO_TARGET_DIR=target/miniquad-tests cargo +stable test --manifest-path vendor/miniquad/Cargo.toml --locked --lib
+      - name: Check real X11 properties and clipboard self-selection
+        run: CARGO_TARGET_DIR=target/miniquad-tests xvfb-run -a cargo +stable test --manifest-path vendor/miniquad/Cargo.toml --locked --lib live_x11_properties_and_clipboard_roundtrip -- --ignored
       - run: cargo +stable check --all-targets --no-default-features
       - run: cargo +stable check --all-targets --features audio
       - run: cargo +stable check --all-targets --target wasm32-unknown-unknown --features audio
@@ -71,3 +73,8 @@ jobs:
         run: >-
           cargo +nightly-2026-10-16 miri test --lib --target ${{ matrix.target }}
           -- experimental::coroutines::tests audio::tests texture::tests tobytes::tests quad_gl::uniform_tests
+      - name: Check Xlib reply layouts and cleanup without foreign calls
+        run: >-
+          CARGO_TARGET_DIR=target/miniquad-miri cargo +nightly-2026-10-16 miri test
+          --manifest-path vendor/miniquad/Cargo.toml --locked --lib --target ${{ matrix.target }}
+          -- property_tests capability_tests

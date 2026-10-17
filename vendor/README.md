@@ -14,11 +14,26 @@ The upstream API, features, JavaScript source, and platform sources are retained
   source commit `fbc59729b24dd6c3c4052a729431fa54ffe42b0d`,
   ricande `<ricande@gmail.com>`. Open/unmerged when reviewed 2026-10-16.
 
-`miniquad.patch` is the complete delta from that artifact: the source PR's
-texture-cache invalidation in `src/graphics/gl.rs` and
-`src/graphics/gl/cache.rs`, plus local CPU regressions in the latter file.
-There are no other changes inside the vendored crate. In particular, this is
-not a general Miniquad security fork or a JavaScript/runtime update.
+`miniquad.patch` is the complete delta from that artifact:
+
+- The attributed texture-cache fix and local CPU regressions in
+  `src/graphics/gl.rs` and `src/graphics/gl/cache.rs`.
+- Local OpenGL pass deletion releases framebuffer objects without deleting
+  caller-owned color/depth/resolve textures, matching Metal's ownership contract.
+  WebGL1 version detection accepts the vendor suffix so unsupported MSAA resolves
+  are not advertised. WebGL2's standard 16-bit depth textures use a sized
+  internal format on creation and resize. GL version copying accepts a null
+  result without constructing a C string; format/capability checks reuse the
+  cached owned version string.
+- Local X11 clipboard/property hardening in
+  `src/native/linux_x11/clipboard.rs`: checked native char/short/long buffer
+  lengths, scoped XFree cleanup across INCR stages, and thread-local immutable
+  message snapshots before FFI. Tests exercise the actual reply/transfer helpers.
+
+The latter changes are local fixes, not imported community patches. There are
+no other changes inside the vendored crate and no JavaScript/runtime update.
+[Backend boundary notes](../docs/backend-boundaries.md) describe the contracts,
+primary Xlib sources, intentional ownership migration and validation limits.
 
 Verify or reconstruct it with Python 3.12+ and Git:
 
@@ -38,6 +53,8 @@ source tree, and run the standalone finite browser test:
 
 ```sh
 CARGO_TARGET_DIR=target/miniquad-tests cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib texture_deletion_tests
+CARGO_TARGET_DIR=target/miniquad-tests cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib property_tests
+CARGO_TARGET_DIR=target/miniquad-tests xvfb-run -a cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib live_x11_properties_and_clipboard_roundtrip -- --ignored
 python3 tests/texture_cache/browser.py
 ```
 
@@ -45,7 +62,10 @@ The browser test requires Chrome/chromedriver and Firefox/geckodriver. Firefox
 requires a working graphics display; an isolated Xvfb display is sufficient.
 It builds both WebGL versions, checks pixel readbacks and GL errors through
 32 rounds of deletion/live updates/replacement, and rejects a stale deleted-ID
-binding even when pixels remain correct. Its loader rejects missing imports.
+binding even when pixels remain correct. It also deletes/recreates passes while
+owners retain color/depth/resolve attachments: non-MSAA in both WebGL versions,
+four-sample MSAA in WebGL2, with and without depth. It checks the advertised
+resolve capability against the selected WebGL version. Its loader rejects missing imports.
 Results are written beneath `target/texture-cache-web/`.
 
 To check the original failure when updating this patch, reconstruct the clean
@@ -58,6 +78,6 @@ mobile crash has the same cause.
 When updating Miniquad, refresh the source artifact/hash/revision together,
 reassess the patch against upstream, run the CPU and native/WebGL regression
 matrix, and update `docs/upstream-issues.md` and the patch ledger. Drop the patch
-once the selected upstream version includes equivalent cache invalidation.
+once the selected upstream version includes equivalent behavior for each fix.
 The vendor's JavaScript file is retained as source/provenance; Zubspace's actual
 bundled runtime still follows its separately documented pairing procedure.

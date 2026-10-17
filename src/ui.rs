@@ -1275,6 +1275,13 @@ pub(crate) mod ui_context {
             self.ui_draw_list.clear();
             self.ui.render(&mut self.ui_draw_list);
             if !self.ui_draw_list.is_empty() {
+                let (max_v, max_i) = crate::with_context(|context| context.gl.drawcall_capacity());
+                // Reject before material creation or any partial UI submission.
+                assert!(
+                    self.ui_draw_list.iter().all(|list| list.indices.is_empty())
+                        || (max_v >= 3 && max_i >= 3),
+                    "UI requires draw call capacities of at least 3 vertices and 3 indices"
+                );
                 if self.material.is_none() {
                     self.material = Some(
                         load_material(
@@ -1315,7 +1322,17 @@ pub(crate) mod ui_context {
                                 .map(|r| (r.x as i32, r.y as i32, r.w as i32, r.h as i32)),
                         );
                         gl.draw_mode(DrawMode::Triangles);
-                        gl.geometry(&command.vertices, &command.indices);
+                        if command.vertices.len() <= max_v && command.indices.len() <= max_i {
+                            gl.geometry(&command.vertices, &command.indices);
+                        } else {
+                            super::render::submit_geometry_chunks(
+                                &command.vertices,
+                                &command.indices,
+                                max_v,
+                                max_i,
+                                |vertices, indices| gl.geometry(vertices, indices),
+                            );
+                        }
                     }
                 });
             }

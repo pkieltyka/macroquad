@@ -163,3 +163,38 @@ impl RenderingBackend for Recorder {
         unimplemented!("GPU operation in CPU ownership test")
     }
 }
+
+/// Require the intended validation failure, not an incidental arithmetic panic.
+pub(crate) fn assert_panics_with(f: impl FnOnce(), expected: &str) {
+    let error = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+        .expect_err("expected validation panic");
+    let message = error
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| error.downcast_ref::<&str>().copied())
+        .unwrap_or("non-string panic");
+    assert!(
+        message.contains(expected),
+        "expected panic containing {expected:?}, got {message:?}"
+    );
+}
+
+#[test]
+fn validation_oracle_rejects_arithmetic_underflow() {
+    assert_panics_with(
+        || panic!("geometry exceeds draw call capacity"),
+        "geometry exceeds draw call capacity",
+    );
+    assert!(std::panic::catch_unwind(|| {
+        assert_panics_with(
+            || {
+                let zero = std::hint::black_box(0usize);
+                let _ = zero
+                    .checked_sub(1)
+                    .expect("attempt to subtract with overflow");
+            },
+            "geometry exceeds draw call capacity",
+        );
+    })
+    .is_err());
+}

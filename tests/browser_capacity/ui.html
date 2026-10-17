@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8">
+<style>html,body {margin:0} canvas {width:64px;height:64px;display:block}</style>
+<canvas id="glcanvas" width="64" height="64" tabindex="1"></canvas>
+<script>
+window.evidence={messages:[],errors:[],pictures:[],completed:false};
+let pending=null;
+const requestFrame=window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame=callback=>requestFrame(time=>{
+ callback(time);
+ if(pending!==null) {
+  const frame=pending;pending=null;
+  try {
+   evidence.context={version:gl.getParameter(gl.VERSION),renderer:gl.getParameter(gl.RENDERER),userAgent:navigator.userAgent};
+   const wants2=new URLSearchParams(location.search).get("wasm").includes("webgl2-");
+   if(evidence.context.version.startsWith("WebGL 2.")!==wants2)throw new Error(`Wrong actual context: ${evidence.context.version}`);
+   const pixels=new Uint8Array(64*64*4);gl.readPixels(0,0,64,64,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+   for(let y=0;y<64;y++)for(let x=0;x<64;x++) {
+    let expected=[0,0,255,255];
+    if(x>=16&&x<48&&y>=16&&y<48) expected=x<32?(y<32?[255,0,0,255]:[0,0,255,255]):(y<32?[0,255,0,255]:[255,255,0,255]);
+    if(x>=24&&x<40&&y>=24&&y<40)expected=[0,255,255,255];
+    if(x>=28&&x<36&&y>=28&&y<36)expected=[255,255,255,255];
+    const at=((63-y)*64+x)*4;
+    if(expected.some((v,i)=>pixels[at+i]!==v))throw new Error(`UI pixel ${frame} ${x},${y}: ${pixels.slice(at,at+4)} expected ${expected}`);
+   }
+   const error=gl.getError();if(error!==gl.NO_ERROR)throw new Error(`GL error ${error}`);
+   evidence.pictures.push({frame,completePixels:true,glError:error});
+  }catch(error){evidence.errors.push(String(error));}
+ }
+});
+for(const level of ["log","info","warn","error"]) {
+ const original=console[level];console[level]=(...args)=>{
+  const value=args.join(" ");evidence.messages.push(value);original.apply(console,args);
+  if(value.startsWith("UI_VERIFY "))pending=Number(value.split(" ")[1]);
+  if(value==="browser UI regression: passed")evidence.completed=true;
+  if(level==="error")evidence.errors.push(value);
+ };
+}
+window.onerror=value=>evidence.errors.push(String(value));window.onunhandledrejection=event=>evidence.errors.push(String(event.reason));
+</script>
+<script src="/js/mq_js_bundle.js"></script><script>load(new URLSearchParams(location.search).get("wasm"));</script>

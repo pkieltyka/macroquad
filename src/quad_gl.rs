@@ -1115,6 +1115,10 @@ impl QuadGl {
         pipeline.textures_data.insert(name.to_owned(), texture);
     }
 
+    pub(crate) fn drawcall_capacity(&self) -> (usize, usize) {
+        (self.max_vertices, self.max_indices)
+    }
+
     pub(crate) fn update_drawcall_capacity(
         &mut self,
         ctx: &mut dyn miniquad::RenderingBackend,
@@ -1365,8 +1369,18 @@ mod capacity_validation_tests {
             drawcall_capacity(65_536, max_indices),
             (65_536, max_indices)
         );
-        assert!(std::panic::catch_unwind(|| drawcall_capacity(4, max_indices + 1)).is_err());
-        assert!(std::panic::catch_unwind(|| drawcall_capacity(4, usize::MAX)).is_err());
+        crate::test_backend::assert_panics_with(
+            || {
+                drawcall_capacity(4, max_indices + 1);
+            },
+            "draw call index capacity exceeds backend buffer or draw limits",
+        );
+        crate::test_backend::assert_panics_with(
+            || {
+                drawcall_capacity(4, usize::MAX);
+            },
+            "draw call index capacity exceeds backend buffer or draw limits",
+        );
     }
 
     #[test]
@@ -1410,7 +1424,28 @@ mod capacity_tests {
     }
 
     #[test]
+    #[ignore = "requires a graphics display; run this exact test under Xvfb"]
     fn capacity_regressions() {
+        // Miniquad permits one display per process. Isolate this test even when
+        // a developer runs all ignored tests alongside the live UI test.
+        if std::env::var_os("MACROQUAD_CAPACITY_TEST_CHILD").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "quad_gl::capacity_tests::capacity_regressions",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env("MACROQUAD_CAPACITY_TEST_CHILD", "1")
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "isolated capacity regression failed: {status}"
+            );
+            return;
+        }
         let failures = Arc::new(Mutex::new(Vec::new()));
         let output = failures.clone();
         miniquad::start(
@@ -1456,7 +1491,10 @@ mod capacity_tests {
                     |gl, _| {
                         gl.geometry(&vertices(3), &[0, 1, 2]);
                         for (v, i) in [(vertices(5), vec![0, 1, 4]), (vertices(3), vec![0; 7])] {
-                            assert!(catch_unwind(AssertUnwindSafe(|| gl.geometry(&v, &i))).is_err());
+                            crate::test_backend::assert_panics_with(
+                                || gl.geometry(&v, &i),
+                                "geometry exceeds draw call capacity",
+                            );
                             assert_eq!(
                                 (
                                     gl.draw_calls_count,
@@ -1475,10 +1513,10 @@ mod capacity_tests {
                     (8, 12),
                     |gl, _| {
                         gl.geometry(&vertices(3), &[0, 1, 2]);
-                        assert!(catch_unwind(AssertUnwindSafe(
-                            || gl.geometry(&vertices(3), &[0, 1, 3])
-                        ))
-                        .is_err());
+                        crate::test_backend::assert_panics_with(
+                            || gl.geometry(&vertices(3), &[0, 1, 3]),
+                            "geometry index is outside its vertex slice",
+                        );
                         assert_eq!(
                             (
                                 gl.draw_calls_count,
@@ -1538,7 +1576,10 @@ mod capacity_tests {
                         gl.geometry(&[], &[]);
                         gl.geometry(&vertices(3), &[]);
                         assert_eq!(gl.draw_calls_count, 0);
-                        assert!(catch_unwind(AssertUnwindSafe(|| gl.geometry(&[], &[0]))).is_err());
+                        crate::test_backend::assert_panics_with(
+                            || gl.geometry(&[], &[0]),
+                            "geometry exceeds draw call capacity",
+                        );
                         gl.update_drawcall_capacity(ctx, 1, 1);
                         gl.geometry(&vertices(1), &[0]);
                         assert_eq!(gl.batch_index_buffer, [0]);
@@ -1551,10 +1592,10 @@ mod capacity_tests {
                     (8, 12),
                     |gl, ctx| {
                         gl.geometry(&vertices(3), &[0, 1, 2]);
-                        assert!(catch_unwind(AssertUnwindSafe(
-                            || gl.update_drawcall_capacity(ctx, 4, 6)
-                        ))
-                        .is_err());
+                        crate::test_backend::assert_panics_with(
+                            || gl.update_drawcall_capacity(ctx, 4, 6),
+                            "cannot change draw call capacity with queued geometry",
+                        );
                         assert_eq!(
                             (
                                 gl.max_vertices,
@@ -1581,10 +1622,10 @@ mod capacity_tests {
                     (4, 6),
                     |gl, ctx| {
                         for count in [i32::MAX as usize + 1, usize::MAX] {
-                            assert!(catch_unwind(AssertUnwindSafe(
-                                || gl.update_drawcall_capacity(ctx, 4, count)
-                            ))
-                            .is_err());
+                            crate::test_backend::assert_panics_with(
+                                || gl.update_drawcall_capacity(ctx, 4, count),
+                                "draw call index capacity exceeds backend buffer or draw limits",
+                            );
                             assert_eq!((gl.max_vertices, gl.max_indices), (4, 6));
                         }
                     },

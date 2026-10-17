@@ -111,7 +111,8 @@ jobs:
           xvfb-run -a env CARGO_TARGET_DIR=target/texture-cache-native cargo +stable run --manifest-path tests/texture_cache/Cargo.toml
           xvfb-run -a cargo +stable run --example image_transfer_regression --no-default-features
           xvfb-run -a cargo +stable run --example graphics_ownership_regression --no-default-features
-          xvfb-run -a cargo +stable test --lib ui_material_is_lazy_and_reused_after_empty_frames -- --ignored
+          xvfb-run -a cargo +stable test --lib ui::ui_context::tests::ui_material_is_lazy_and_reused_after_empty_frames --no-default-features -- --exact --ignored
+          xvfb-run -a cargo +stable test --lib quad_gl::capacity_tests::capacity_regressions --no-default-features -- --exact --ignored
       - name: Record resolved native and browser dependencies
         run: |
           cargo +stable tree --target x86_64-unknown-linux-gnu --no-default-features

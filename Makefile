@@ -51,6 +51,11 @@ check-shared:
 	$(CARGO) check --all-targets --no-default-features
 	$(CARGO) check --all-targets --features audio
 	$(XVFB_RUN) -a $(CARGO) test --tests --no-default-features
+	$(XVFB_RUN) -a $(CARGO) test --lib quad_gl::capacity_tests::capacity_regressions --no-default-features -- --exact --ignored
+	$(XVFB_RUN) -a $(CARGO) test --lib ui::ui_context::tests::ui_material_is_lazy_and_reused_after_empty_frames --no-default-features -- --exact --ignored
+	$(XVFB_RUN) -a env CARGO_TARGET_DIR=target/texture-cache-native $(CARGO) run --manifest-path tests/texture_cache/Cargo.toml
+	$(XVFB_RUN) -a $(CARGO) run --example image_transfer_regression --no-default-features
+	$(XVFB_RUN) -a $(CARGO) run --example graphics_ownership_regression --no-default-features
 	$(XVFB_RUN) -a $(CARGO) test --doc --no-default-features
 	CARGO_TARGET_DIR=target/miniquad-tests $(CARGO) test --manifest-path vendor/miniquad/Cargo.toml --locked --lib
 	CARGO_TARGET_DIR=target/miniquad-tests $(XVFB_RUN) -a $(CARGO) test --manifest-path vendor/miniquad/Cargo.toml --locked --lib live_x11_ -- --ignored

@@ -10,7 +10,13 @@ macroquad = { path = "../..", default-features = false }
 [features]
 webgl2 = []
 auto = []
+ui-small = []
+ui-tiny = []
 
 [[bin]]
 name = "browser-capacity-regression"
 path = "capacity.rs"
+
+[[bin]]
+name = "browser-ui-regression"
+path = "ui.rs"

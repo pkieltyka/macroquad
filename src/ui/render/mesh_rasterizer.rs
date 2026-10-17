@@ -1,5 +1,7 @@
 //! Rasterize DrawCommand into GPU drawable mesh
 
+use std::convert::TryFrom;
+
 use crate::{
     color::Color,
     math::{vec2, vec3, Rect, RectOffset, Vec2},
@@ -322,6 +324,151 @@ pub(crate) fn render_command(draw_lists: &mut Vec<DrawList>, command: DrawComman
             color,
         } => {
             active_draw_list.draw_triangle(p0, p1, p2, source, color);
+        }
+    }
+}
+
+/// Split only built-in UI triangles; public mesh submissions retain their atomic contract.
+pub(crate) fn submit_geometry_chunks(
+    vertices: &[Vertex],
+    indices: &[u16],
+    max_v: usize,
+    max_i: usize,
+    mut submit: impl FnMut(&[Vertex], &[u16]),
+) {
+    if indices.is_empty() {
+        return;
+    }
+    assert!(
+        max_v >= 3 && max_i >= 3,
+        "UI requires draw call capacities of at least 3 vertices and 3 indices"
+    );
+    assert_eq!(
+        indices.len() % 3,
+        0,
+        "UI indices must contain complete triangles"
+    );
+    assert!(
+        indices.iter().all(|&i| (i as usize) < vertices.len()),
+        "UI index is outside its vertex slice"
+    );
+    let max_v = max_v.min(u16::MAX as usize + 1);
+    let mut chunk_vertices = Vec::new();
+    let mut chunk_indices = Vec::new();
+    let mut remap = std::collections::HashMap::new();
+    for triangle in indices.chunks_exact(3) {
+        let added = triangle
+            .iter()
+            .enumerate()
+            .filter(|&(n, i)| !remap.contains_key(i) && !triangle[..n].contains(i))
+            .count();
+        if chunk_vertices.len() + added > max_v || chunk_indices.len() + 3 > max_i {
+            submit(&chunk_vertices, &chunk_indices);
+            chunk_vertices.clear();
+            chunk_indices.clear();
+            remap.clear();
+        }
+        for &source in triangle {
+            let index = *remap.entry(source).or_insert_with(|| {
+                let index =
+                    u16::try_from(chunk_vertices.len()).expect("UI chunk vertex index overflow");
+                chunk_vertices.push(vertices[source as usize]);
+                index
+            });
+            chunk_indices.push(index);
+        }
+    }
+    if !chunk_indices.is_empty() {
+        submit(&chunk_vertices, &chunk_indices);
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+    use glam::Vec4;
+
+    #[test]
+    fn chunks_preserve_triangle_order_and_every_vertex_attribute() {
+        let vertices: Vec<_> = (0..8)
+            .map(|n| {
+                let n = n as f32;
+                let mut v = Vertex::new(
+                    n,
+                    n + 1.,
+                    n + 2.,
+                    n / 8.,
+                    n / 9.,
+                    Color::new(n / 8., 0.5, 1., 1.),
+                );
+                v.normal = Vec4::new(n, 2. * n, -n, 3.);
+                v
+            })
+            .collect();
+        // Repeated/degenerate triangles are intentional, and must remain ordered.
+        let indices = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 0, 0, 1, 7, 2, 0];
+        let expected: Vec<_> = indices
+            .iter()
+            .map(|&i| format!("{:?}", vertices[i as usize]))
+            .collect();
+        for (max_v, max_i) in [(3, 3), (4, 6), (8, 3), (3, 30), (8, 30)] {
+            let mut actual = Vec::new();
+            let mut calls = 0;
+            submit_geometry_chunks(&vertices, &indices, max_v, max_i, |v, i| {
+                assert!(v.len() <= max_v && i.len() <= max_i);
+                assert_eq!(i.len() % 3, 0);
+                actual.extend(i.iter().map(|&n| format!("{:?}", v[n as usize])));
+                calls += 1;
+            });
+            assert_eq!(actual, expected);
+            if (max_v, max_i) == (8, 30) {
+                assert_eq!(calls, 1);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_and_invalid_chunks_never_submit_partial_work() {
+        let v = [Vertex::new(0., 0., 0., 0., 0., Color::default()); 3];
+        submit_geometry_chunks(&v, &[], 0, 0, |_, _| panic!("empty submission"));
+        for (vertices, indices, max_v, max_i, message) in [
+            (
+                &v[..],
+                &[0, 1, 2][..],
+                2,
+                3,
+                "UI requires draw call capacities of at least 3 vertices and 3 indices",
+            ),
+            (
+                &v[..],
+                &[0, 1, 2][..],
+                3,
+                2,
+                "UI requires draw call capacities of at least 3 vertices and 3 indices",
+            ),
+            (
+                &v[..],
+                &[0, 1, 2, 0, 1, 3][..],
+                3,
+                3,
+                "UI index is outside its vertex slice",
+            ),
+            (
+                &v[..],
+                &[0, 1, 2, 0][..],
+                3,
+                3,
+                "UI indices must contain complete triangles",
+            ),
+        ] {
+            crate::test_backend::assert_panics_with(
+                || {
+                    submit_geometry_chunks(vertices, indices, max_v, max_i, |_, _| {
+                        panic!("partial submission")
+                    })
+                },
+                message,
+            );
         }
     }
 }

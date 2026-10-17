@@ -443,10 +443,11 @@ impl Context {
     }
 
     fn end_frame(&mut self) {
-        self.perform_render_passes();
-
+        // Stage already submitted game geometry with its retained camera.
+        // UI queued afterwards uses screen space without changing that camera.
         let screen_mat = self.pixel_perfect_projection_matrix();
         self.gpu.with(|backend| self.gl.draw(backend, screen_mat));
+        self.retained_materials.clear();
 
         self.gpu.with(|backend| backend.commit_frame());
 
@@ -1175,7 +1176,9 @@ pub mod conf {
         /// Individual meshes must fit both capacities and have valid local indices;
         /// oversized or invalid indexed geometry panics instead of being truncated.
         /// Empty index slices do not submit geometry. Zero and small capacities are
-        /// allowed, but any indexed geometry must fit them.
+        /// allowed, but any indexed geometry must fit them. Built-in UI splits its
+        /// private triangle lists to fit; nonempty UI requires at least 3 vertices
+        /// and 3 indices, and rejects smaller capacities before submitting any UI.
         pub draw_call_vertex_capacity: usize,
         /// Maximum number of indices per draw call, independently of u16 index
         /// values. Defaults to 5,000. Must fit the backend's signed draw count and

@@ -16,8 +16,16 @@ for (const level of ["log", "info", "warn", "error"]) {
 window.onerror = message => evidence.errors.push(String(message));
 window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
 </script>
-<script src="/vendor/miniquad/js/gl.js"></script>
 <script>
+(async () => {
+const runtime = new URLSearchParams(location.search).get("runtime") || "/vendor/miniquad/js/gl.js";
+await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = runtime;
+    script.onload = resolve;
+    script.onerror = reject;
+    document.head.append(script);
+});
 // glGetError is intentionally implemented, rather than accepting the loader's stub.
 importObject.env.glGetError = () => gl.getError();
 const originalBind = importObject.env.glBindTexture;
@@ -38,4 +46,5 @@ add_missing_functions_stabs = module => {
     if (missing.length) throw new Error(`Missing imports: ${JSON.stringify(missing)}`);
 };
 load(new URLSearchParams(location.search).get("wasm"));
+})().catch(error => evidence.errors.push(String(error)));
 </script>

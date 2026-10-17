@@ -9,6 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify paired runtime and release asset generation
+        run: |
+          node tools/regenerate_browser_runtime.mjs --check
+          node --test tests/browser_runtime.test.mjs
+          python3 tests/test_prepare_release.py
       - name: Install native graphics and audio dependencies
         run: |
           sudo apt-get update
@@ -36,6 +44,11 @@ jobs:
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C link-arg=--allow-undefined"
         run: cargo +stable build --example audio_lifecycle_regression --example graphics_ownership_regression --target wasm32-unknown-unknown --features audio
+      - name: Reject missing runtime imports and incompatible Rust pairing
+        run: |
+          node tools/check_browser_runtime.mjs --source-only
+          node tools/check_browser_runtime.mjs --wasm target/wasm32-unknown-unknown/debug/examples/audio_lifecycle_regression.wasm
+          node tools/check_browser_runtime.mjs --wasm target/wasm32-unknown-unknown/debug/examples/graphics_ownership_regression.wasm --no-audio
       - name: Check lifecycle CPU paths and grouped graphics tests
         run: xvfb-run -a cargo +stable test --tests --no-default-features
       - run: cargo +stable test --test image_codecs --no-default-features

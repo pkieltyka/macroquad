@@ -1,11 +1,12 @@
 [package]
+publish = false
 name = "macroquad"
-version = "0.4.16"
+version = "0.5.0"
 authors = ["not-fl3 <not.fl3@gmail.com>"]
 edition = "2021"
 rust-version = "1.88"
-homepage = "https://github.com/not-fl3/macroquad"
-repository = "https://github.com/not-fl3/macroquad"
+homepage = "https://github.com/pkieltyka/macroquad"
+repository = "https://github.com/pkieltyka/macroquad"
 description = """
 Simple and easy to use graphics library
 """
@@ -36,7 +37,8 @@ macroquad_macro = { version = "0.1.8", path = "macroquad_macro" }
 fontdue = "0.9"
 backtrace = { version = "0.3.60", optional = true }
 log = { version = "0.4", optional = true }
-quad-snd = { version = "0.2", optional = true }
+# The release's paired JavaScript implements this audio plugin version.
+quad-snd = { version = "=0.2.8", optional = true }
 
 [dev-dependencies]
 macroquad-tiled = { path = "./tiled" }

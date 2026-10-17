@@ -319,7 +319,7 @@ real decoding, failure, pending cancellation, last-clone drop and cancellation
 of an unclaimed completed sound. The browser fixture checks each allocated
 source is deleted once and remains deleted after late callbacks. Run it with
 `tests/ui_material_browser.py --fixture tests/audio_lifecycle_regression.html
---marker "audio lifecycle regression: passed" --runtime /path/to/paired/bundle.js
+--marker "audio lifecycle regression: passed" --runtime js/mq_js_bundle.js
 --output target/audio-lifecycle-browser --unlock-audio --timeout 90` after building the example
 for WASM with audio (quad-snd requires the existing WASM `--allow-undefined`
 linker setting). The same runner preserves the existing UI regression by default.

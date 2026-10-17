@@ -1,10 +1,11 @@
 [package]
+publish = false
 name = "macroquad_macro"
 version = "0.1.8"
 authors = ["not-fl3 <not.fl3@gmail.com>"]
 edition = "2018"
 license = "MIT/Apache-2.0"
-repository = "https://github.com/not-fl3/macroquad"
+repository = "https://github.com/pkieltyka/macroquad"
 description = """
 Proc macro for macroquad
 """

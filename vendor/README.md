@@ -93,5 +93,6 @@ When updating Miniquad, refresh the source artifact/hash/revision together,
 reassess the patch against upstream, run the CPU and native/WebGL regression
 matrix, and update `docs/upstream-issues.md` and the patch ledger. Drop the patch
 once the selected upstream version includes equivalent behavior for each fix.
-The vendor's JavaScript file is retained as source/provenance; Zubspace's actual
-bundled runtime still follows its separately documented pairing procedure.
+The vendor's JavaScript file is retained as source/provenance. The fork's actual
+paired bundle is maintained separately in `js/` from the published Macroquad
+0.4.16 aggregate; see [runtime provenance](../docs/browser-runtime.md).

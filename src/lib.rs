@@ -6,7 +6,7 @@
 //! ## Supported platforms
 //!
 //! * Linux with OpenGL
-//! * Browser WASM with WebGL (the paired Zubspace runtime is required for audio)
+//! * Browser WASM with WebGL (the paired fork runtime is required for audio)
 //!
 //! ## Features
 //!

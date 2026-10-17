@@ -48,7 +48,7 @@ def build(output):
         shutil.copyfile(source, output / f"webgl{version}.wasm")
 
 
-def check(browser, base_url, output, expected_stale):
+def check(browser, base_url, output, expected_stale, runtime=None):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -81,7 +81,10 @@ def check(browser, base_url, output, expected_stale):
             session = request(port, "POST", "/session", {"capabilities": {"alwaysMatch": options}})["sessionId"]
             for version in (1, 2):
                 wasm = "/" + (output / f"webgl{version}.wasm").relative_to(ROOT).as_posix()
-                url = base_url + "/tests/texture_cache/case.html?" + urllib.parse.urlencode({"wasm": wasm})
+                query = {"wasm": wasm}
+                if runtime:
+                    query["runtime"] = "/" + runtime.resolve().relative_to(ROOT).as_posix()
+                url = base_url + "/tests/texture_cache/case.html?" + urllib.parse.urlencode(query)
                 request(port, "POST", f"/session/{session}/url", {"url": url})
                 deadline = time.monotonic() + 30
                 while True:
@@ -119,6 +122,7 @@ if __name__ == "__main__":
     parser.add_argument("--wasm-dir", default="target/texture-cache-web")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--expect-stale", action="store_true")
+    parser.add_argument("--runtime", type=Path, help="Use the paired aggregate instead of the vendored Miniquad runtime")
     parser.add_argument("--browsers", nargs="+", choices=["chrome", "firefox"], default=["chrome", "firefox"])
     args = parser.parse_args()
     output = (ROOT / args.wasm_dir).resolve()
@@ -130,7 +134,7 @@ if __name__ == "__main__":
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for browser in args.browsers:
-            check(browser, f"http://127.0.0.1:{server.server_port}", output, args.expect_stale)
+            check(browser, f"http://127.0.0.1:{server.server_port}", output, args.expect_stale, args.runtime)
     finally:
         server.shutdown()
         server.server_close()

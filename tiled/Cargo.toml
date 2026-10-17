@@ -1,4 +1,6 @@
 [package]
+publish = false
+repository = "https://github.com/pkieltyka/macroquad"
 name = "macroquad-tiled"
 version = "0.2.1"
 authors = ["Fedor Logachev <not.fl3@gmail.com>"]
@@ -12,4 +14,4 @@ Tiled editor macroquad intergration
 
 [dependencies]
 nanoserde = "0.1"
-macroquad = { path = "../", version = "0.4.0" }
+macroquad = { path = "../", version = "0.5" }

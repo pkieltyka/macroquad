@@ -1,8 +1,9 @@
 # Maintaining the Zubspace fork
 
 This fork serves Zubspace rather than preserving Macroquad's full upstream API
-and platform matrix. The package still identifies itself as Macroquad 0.4.16;
-source identity is the full Git revision, not that version string. Rust 1.88 is
+and platform matrix. The GitHub-only fork package is Macroquad 0.5.0, based on
+upstream Macroquad 0.4.16 with vendored Miniquad 0.4.11. Pin the full release
+Git revision and paired JavaScript, rather than a registry version. Rust 1.88 is
 the declared minimum, including the image 0.25.10 dependency. See
 [security contracts](security.md), [patch attribution](patch-ledger.md),
 [dependency decisions](dependency-audit.md) and [backend boundaries](backend-boundaries.md).
@@ -71,31 +72,29 @@ revision. Macroquad's local Miniquad path dependency carries its vendored fixes
 to Git consumers; a dependency's own `[patch.crates-io]` cannot substitute for
 that path dependency.
 
-Cargo does not regenerate `js/mq_js_bundle.js`. Use Zubspace's maintained
-runtime source, transforms and provenance, not an arbitrary hosted bundle or
-this fork's inherited `js/` aggregate. The maintained runtime is based on the
-published Macroquad 0.4.16 bundle. Its inputs are
-`vendor/browser-runtime/macroquad-0.4.16.js` and `tools/browser_runtime.mjs`;
-`js/mq_js_bundle.provenance.json` identifies the generated artifact and sources.
-Run these commands from the Zubspace checkout containing those maintenance tools:
-
-After resolving `Cargo.lock`, update `js/mq_js_bundle.provenance.json`’s
-`rustPackages` versions and exact sources from that lockfile, including Macroquad
-and vendored Miniquad’s full Git sources. Set
-`extensions.zubspace_audio_source_state.requiredByCurrentRust` to `true`. Runtime
-regeneration updates the bundle hash; it does not update these pairing fields.
+Cargo fetches Rust sources only. The matching `js/mq_js_bundle.js` is now
+maintained in this fork, together with its upstream 0.4.16 base, deterministic
+transforms, notices and provenance. Use this source tree's bundle or the matching
+GitHub release asset, verifying its `SHA256SUMS` and `release-manifest.json`.
+The latter records the final release commit and source/runtime input hashes.
+See [runtime provenance](browser-runtime.md) and the [adoption snippet](../README.md).
+From this fork checkout, with a resolved local lockfile:
 
 ```sh
-node tools/regenerate_browser_runtime.mjs
+node tools/regenerate_browser_runtime.mjs --check
 node tools/check_browser_runtime.mjs --source-only
-node --test tests/browser_runtime.test.mjs tests/browser_bundle.test.mjs
-make build-client
-node tools/check_browser_runtime.mjs --wasm target/wasm32-unknown-unknown/debug/zubspace.wasm
-make build-server
-make check-release-bundle
-node tools/check_browser_runtime.mjs --wasm target/wasm32-unknown-unknown/release/zubspace.wasm
-node tools/check_browser_runtime.mjs --release-root dist
+node --test tests/browser_runtime.test.mjs
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="-C link-arg=--allow-undefined" cargo build --example audio_lifecycle_regression --target wasm32-unknown-unknown --features audio
+node tools/check_browser_runtime.mjs --wasm target/wasm32-unknown-unknown/debug/examples/audio_lifecycle_regression.wasm
 ```
+
+The source provenance describes local path resolution (null Git sources), while
+the release manifest binds the final immutable Git commit for downstream pins.
+A consumer must verify both Macroquad and its vendored Miniquad resolve from
+that same Git revision in its own lockfile. Runtime regeneration needs no private
+Zubspace directories or application assets. Zubspace's existing application gate
+and provenance remain application-owned; update those in its separate adoption
+thread using the release commit and unchanged runtime output checksum.
 
 The import gate must resolve real implementations, without fallback stubs, and
 record the actual Rust package source and full revision. For this fork, require
@@ -131,13 +130,14 @@ CARGO_TARGET_DIR=target/miniquad-tests cargo test --manifest-path vendor/miniqua
 CARGO_TARGET_DIR=target/miniquad-tests xvfb-run -a cargo test --manifest-path vendor/miniquad/Cargo.toml --locked --lib live_x11_properties_and_clipboard_roundtrip -- --ignored
 xvfb-run -a env CARGO_TARGET_DIR=target/texture-cache-native cargo run --manifest-path tests/texture_cache/Cargo.toml
 xvfb-run -a python3 tests/texture_cache/browser.py
+xvfb-run -a python3 tests/texture_cache/browser.py --no-build --runtime js/mq_js_bundle.js
 ```
 
 CI also checks actual Rust 1.88 native/WASM compatibility, scoped formatting,
 codec behavior and pinned nightly Miri on x86_64/i686. Use the workflow's exact
 test filters and nightly rather than treating Miri as a graphics/audio FFI test.
 Its native GPU and browser fixtures complement the interpreter. Paired audio
-fixtures need the Zubspace-generated runtime and the intentional WASM linker
+fixtures use this fork's `js/mq_js_bundle.js` runtime and the intentional WASM linker
 setting `-C link-arg=--allow-undefined`; the import gate must still reject
 missing implementations. [Security documentation](security.md) identifies the
 ownership/audio fixture entry points and remaining evidence boundaries.

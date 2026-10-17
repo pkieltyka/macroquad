@@ -1,4 +1,6 @@
 [package]
+publish = false
+repository = "https://github.com/pkieltyka/macroquad"
 name = "macroquad-particles"
 version = "0.2.2"
 authors = ["Fedor Logachev <not.fl3@gmail.com>"]
@@ -9,5 +11,5 @@ Visual effects editor based on macroquad and megaui.
 """
 
 [dependencies]
-macroquad = { path = "../", version = "0.4.0", default-features = false }
+macroquad = { path = "../", version = "0.5", default-features = false }
 nanoserde = { version = "0.1", optional = true }

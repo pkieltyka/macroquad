@@ -6,6 +6,25 @@ are called out separately. Use `git log --follow -- <path>` to find the local
 integration commit. Recheck the ledger when updating upstream and drop patches
 that have landed there.
 
+## Shared per-flush draw submission for prepared 0.5.1
+
+Local change; no upstream source. Upstream `QuadGl::draw` (unchanged at the fork
+base) allocates a full-capacity vertex/index buffer pair per draw-call slot and,
+for every call, begins and ends a render pass, uploads twice and re-applies
+pipeline, viewport, scissor, bindings and uniforms (about 31 WebGL calls per
+call). The fork uploads each flush once into shared buffers grouped into
+u16-addressable segments and draws at index offsets. It keeps one pass open per
+target, closing it around screen-texture snapshots and telemetry capture, and
+skips unchanged state. The backend patch adds three local Miniquad changes:
+- the GL cache tracks the active texture unit;
+- sampler units are assigned once per shader;
+- resource ids use a multiplicative hasher instead of SipHash.
+
+Managed textures cache their fixed creation size for the draw path. Framebuffers
+in the generated benchmark stayed byte-identical in Chrome and Firefox (WebGL1/2)
+while WebGL calls per frame fell by about 89%. See
+[release notes](releases/zubspace-v0.5.1.md#draw-submission).
+
 ## Owned browser termination for prepared 0.5.1
 
 [Miniquad #602](https://github.com/not-fl3/miniquad/pull/602), by TheRedDeveloper,
@@ -18,7 +37,7 @@ coordinates and raw motion remain intact.
 
 Local additions preserve physical/simulated Left aggregation, legacy touch Ended
 semantics, cancellation and wake with simulation disabled. If a terminal is lost,
-a later authoritative touches list reconciles only canvas-owned IDs, using their
+a later touches list that agrees with its own event's changes reconciles only canvas-owned IDs, using their
 last positions and synthetic Cancelled callbacks; unrelated contacts are never
 adopted. Recovery needs a later event. Real browser mouse actions and explicitly
 synthetic missing-touch/wake regressions are separate evidence; physical-device

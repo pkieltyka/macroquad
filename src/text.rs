@@ -102,19 +102,21 @@ impl Font {
 
         let (metrics, bitmap) = self.font.rasterize(character, size as f32);
 
-        let (width, height) = (metrics.width as u16, metrics.height as u16);
+        let width = u16::try_from(metrics.width).expect("Glyph width exceeds image dimensions");
+        let height = u16::try_from(metrics.height).expect("Glyph height exceeds image dimensions");
 
         let sprite = self.atlas.lock().unwrap().new_unique_id();
         self.atlas.lock().unwrap().cache_sprite(
             sprite,
-            Image {
-                bytes: bitmap
+            Image::from_rgba8(
+                width,
+                height,
+                bitmap
                     .iter()
                     .flat_map(|coverage| [255, 255, 255, *coverage])
                     .collect(),
-                width,
-                height,
-            },
+            )
+            .expect("Invalid glyph image"),
         );
         let advance = metrics.advance_width;
 

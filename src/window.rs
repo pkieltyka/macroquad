@@ -4,8 +4,7 @@ use crate::{get_context, get_quad_context};
 
 use crate::color::Color;
 
-// miniquad is re-exported for the use in combination with `get_internal_gl`
-pub use miniquad;
+pub use crate::miniquad;
 
 pub use miniquad::conf::Conf;
 
@@ -33,26 +32,9 @@ pub fn gl_set_drawcall_buffer_capacity(max_vertices: usize, max_indices: usize) 
         .update_drawcall_capacity(get_quad_context(), max_vertices, max_indices);
 }
 
-pub struct InternalGlContext<'a> {
-    pub quad_context: &'a mut dyn miniquad::RenderingBackend,
-    pub quad_gl: &'a mut crate::quad_gl::QuadGl,
-}
-
-impl<'a> InternalGlContext<'a> {
-    /// Draw all the batched stuff and reset the internal state cache.
-    /// May be helpful for combining macroquad's drawing with raw miniquad/opengl calls.
-    pub fn flush(&mut self) {
-        get_context().perform_render_passes();
-    }
-}
-
-pub unsafe fn get_internal_gl<'a>() -> InternalGlContext<'a> {
-    let context = get_context();
-
-    InternalGlContext {
-        quad_context: get_quad_context(),
-        quad_gl: &mut context.gl,
-    }
+/// Returns the selected renderer without exposing its raw backend.
+pub fn rendering_backend() -> miniquad::Backend {
+    get_quad_context().info().backend
 }
 
 pub fn screen_width() -> f32 {

@@ -158,9 +158,8 @@ async fn main() {
         ..Default::default()
     };
 
-    let ctx = unsafe { get_internal_gl().quad_context };
     let mat = load_material(
-        match ctx.info().backend {
+        match rendering_backend() {
             Backend::OpenGl => ShaderSource::Glsl {
                 vertex: VERTEX,
                 fragment: FRAGMENT,
@@ -176,7 +175,7 @@ async fn main() {
     .unwrap();
 
     let mat_with_array = load_material(
-        match ctx.info().backend {
+        match rendering_backend() {
             Backend::OpenGl => ShaderSource::Glsl {
                 vertex: VERTEX,
                 fragment: FRAGMENT_WITH_ARRAY,

@@ -1,59 +1,47 @@
+name: Supported fork checks
 on: [push, pull_request]
 
-name: CI
+permissions:
+  contents: read
 
 jobs:
-  build:
-    name: Cross-compile
-    runs-on: ${{ matrix.config.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-          - { os: ubuntu-latest, target: 'x86_64-unknown-linux-gnu' }
-          - { os: ubuntu-latest, target: 'x86_64-pc-windows-gnu' }
-          - { os: ubuntu-latest, target: 'wasm32-unknown-unknown' }
-          - { os: macos-latest, target: 'x86_64-apple-darwin' }
-          - { os: windows-latest, target: 'x86_64-pc-windows-msvc' }
-        include:
-          - os: ubuntu-latest
-            packages: libx11-dev libxi-dev libgl1-mesa-dev gcc-mingw-w64 libasound2-dev
-
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install packages (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get -yq --no-install-suggests --no-install-recommends install ${{ matrix.packages }}
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.config.target }}
-          override: true
-      - name: Workaround MinGW issue # https://github.com/rust-lang/rust/issues/47048
-        if: runner.os == 'Linux' && matrix.config.target == 'x86_64-pc-windows-gnu'
-        run: |
-          sudo cp /usr/x86_64-w64-mingw32/lib/dllcrt2.o  ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-pc-windows-gnu/lib/dllcrt2.o
-          sudo cp /usr/x86_64-w64-mingw32/lib/crt2.o  ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-pc-windows-gnu/lib/crt2.o
-          echo "[target.x86_64-pc-windows-gnu]" >> ~/.cargo/config
-          echo "linker = \"/usr/bin/x86_64-w64-mingw32-gcc\"" >> ~/.cargo/config
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --all-targets --target=${{ matrix.config.target }}
-  fmt:
-    name: cargo fmt
+  supported:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - run: rustup component add rustfmt
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check 
+      - uses: actions/checkout@v4
+      - name: Install native graphics and audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libxcursor-dev libgl1-mesa-dev libasound2-dev xvfb
+      - name: Install supported Rust targets
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup target add --toolchain stable wasm32-unknown-unknown
+      - run: cargo +stable fmt --all -- --check
+      - run: cargo +stable check --all-targets --no-default-features
+      - run: cargo +stable check --all-targets --features audio
+      - run: cargo +stable check --all-targets --target wasm32-unknown-unknown --features audio
+      - run: cargo +stable test --lib --no-default-features
+      - run: xvfb-run -a cargo +stable test --doc --no-default-features
+      - name: Validate RGBA transfers and UI shader lifecycle on native GL
+        run: |
+          xvfb-run -a cargo +stable run --example image_transfer_regression --no-default-features
+          xvfb-run -a cargo +stable test --lib ui_material_is_lazy_and_reused_after_empty_frames -- --ignored
+      - name: Record resolved native and browser dependencies
+        run: |
+          cargo +stable tree --target x86_64-unknown-linux-gnu --no-default-features
+          cargo +stable tree --target wasm32-unknown-unknown --features audio
+
+  miri:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, i686-unknown-linux-gnu]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated interpreter toolchain
+        run: rustup toolchain install nightly-2026-10-16 --profile minimal --component miri --component rust-src
+      - name: Check CPU buffers, representations and uniform bounds
+        run: >-
+          cargo +nightly-2026-10-16 miri test --lib --target ${{ matrix.target }}
+          -- texture::tests tobytes::tests quad_gl::uniform_tests

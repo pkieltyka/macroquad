@@ -13,11 +13,12 @@ pub use crate::time::*;
 pub use crate::window::*;
 
 pub use crate::color::{colors::*, Color};
-pub use crate::quad_gl::{DrawMode, GlPipeline, QuadGl};
-pub use glam;
-pub use miniquad::{
+pub use crate::quad_gl::DrawMode;
+pub(crate) use crate::quad_gl::QuadGl;
+pub use ::miniquad::{
     conf::Conf, Comparison, PipelineParams, ShaderError, ShaderSource, UniformDesc, UniformType,
 };
+pub use glam;
 pub use quad_rand as rand;
 
 pub use crate::experimental::*;

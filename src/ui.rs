@@ -1387,7 +1387,7 @@ pub(crate) mod ui_context {
                 let rendered = get_screen_data();
                 assert!(
                     rendered
-                        .bytes
+                        .bytes()
                         .chunks_exact(4)
                         .filter(|pixel| *pixel == [0, 0, 255, 255])
                         .count()
@@ -1395,7 +1395,7 @@ pub(crate) mod ui_context {
                 );
                 assert!(
                     rendered
-                        .bytes
+                        .bytes()
                         .chunks_exact(4)
                         .filter(|pixel| *pixel == [255, 255, 255, 255])
                         .count()

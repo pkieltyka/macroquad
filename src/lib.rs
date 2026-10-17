@@ -36,7 +36,7 @@
 //! }
 //!```
 
-use miniquad::*;
+use ::miniquad::*;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
@@ -144,7 +144,36 @@ pub mod logging {
 #[cfg(feature = "log-rs")]
 // Use logging facade
 pub use ::log as logging;
-pub use miniquad;
+/// Supported Miniquad value types and clock. Raw rendering backends are private
+/// because their safe pointer/buffer APIs do not uphold Rust's safety contract.
+///
+/// ```compile_fail
+/// use macroquad::miniquad::RenderingBackend;
+/// ```
+/// ```compile_fail
+/// macroquad::miniquad::window::new_rendering_backend();
+/// ```
+/// ```compile_fail
+/// use macroquad::window::get_internal_gl;
+/// ```
+/// ```compile_fail
+/// use macroquad::experimental::{scene, collections, state_machine};
+/// ```
+/// ```compile_fail
+/// use macroquad::experimental::coroutines::tweens;
+/// ```
+/// ```compile_fail
+/// use macroquad::prelude::QuadGl;
+/// ```
+pub mod miniquad {
+    pub(crate) use ::miniquad::*;
+    pub use ::miniquad::{
+        conf, date, Backend, BlendFactor, BlendState, BlendValue, Comparison, CullFace, Equation,
+        FilterMode, FrontFaceOrder, KeyCode, KeyMods, MouseButton, PipelineParams, ShaderError,
+        ShaderSource, StencilFaceState, StencilOp, StencilState, TouchPhase, UniformDesc,
+        UniformType,
+    };
+}
 
 use crate::{
     color::{colors::*, Color},
@@ -223,7 +252,7 @@ struct Context {
     unwind: bool,
     recovery_future: Option<Pin<Box<dyn Future<Output = ()>>>>,
 
-    quad_context: Box<dyn miniquad::RenderingBackend>,
+    quad_context: Box<dyn ::miniquad::RenderingBackend>,
 
     default_filter_mode: crate::quad_gl::FilterMode,
     textures: crate::texture::TexturesContext,
@@ -278,7 +307,7 @@ enum MiniquadInputEvent {
 }
 
 impl MiniquadInputEvent {
-    fn repeat<T: miniquad::EventHandler>(&self, t: &mut T) {
+    fn repeat<T: ::miniquad::EventHandler>(&self, t: &mut T) {
         use crate::MiniquadInputEvent::*;
         match self {
             MouseMotion { x, y } => t.mouse_motion_event(*x, *y),
@@ -312,9 +341,9 @@ impl Context {
         draw_call_vertex_capacity: usize,
         draw_call_index_capacity: usize,
     ) -> Context {
-        let mut ctx: Box<dyn miniquad::RenderingBackend> =
-            miniquad::window::new_rendering_backend();
-        let (screen_width, screen_height) = miniquad::window::screen_size();
+        let mut ctx: Box<dyn ::miniquad::RenderingBackend> =
+            ::miniquad::window::new_rendering_backend();
+        let (screen_width, screen_height) = ::miniquad::window::screen_size();
 
         Context {
             screen_width,
@@ -359,8 +388,8 @@ impl Context {
 
             pc_assets_folder: None,
 
-            start_time: miniquad::date::now(),
-            last_frame_time: miniquad::date::now(),
+            start_time: ::miniquad::date::now(),
+            last_frame_time: ::miniquad::date::now(),
             frame_time: 1. / 60.,
 
             #[cfg(one_screenshot)]
@@ -379,7 +408,7 @@ impl Context {
     }
 
     /// Returns the handle for this texture.
-    pub fn raw_miniquad_id(&self, handle: &TextureHandle) -> miniquad::TextureId {
+    pub fn raw_miniquad_id(&self, handle: &TextureHandle) -> ::miniquad::TextureId {
         match handle {
             TextureHandle::Unmanaged(texture) => *texture,
             TextureHandle::Managed(texture) => self
@@ -410,8 +439,6 @@ impl Context {
     }
 
     fn end_frame(&mut self) {
-        crate::experimental::scene::update();
-
         self.perform_render_passes();
 
         self.ui_context.draw(get_quad_context(), &mut self.gl);
@@ -459,9 +486,9 @@ impl Context {
     }
 
     pub(crate) fn pixel_perfect_projection_matrix(&self) -> glam::Mat4 {
-        let (width, height) = miniquad::window::screen_size();
+        let (width, height) = ::miniquad::window::screen_size();
 
-        let dpi = miniquad::window::dpi_scale();
+        let dpi = ::miniquad::window::dpi_scale();
 
         glam::Mat4::orthographic_rh_gl(0., width / dpi, height / dpi, 0., -1., 1.)
     }
@@ -500,7 +527,7 @@ fn get_context() -> &'static mut Context {
     unsafe { CONTEXT.as_mut().unwrap_or_else(|| panic!()) }
 }
 
-fn get_quad_context() -> &'static mut dyn miniquad::RenderingBackend {
+fn get_quad_context() -> &'static mut dyn ::miniquad::RenderingBackend {
     thread_assert::same_thread();
 
     unsafe {
@@ -520,8 +547,8 @@ impl EventHandler for Stage {
         get_context().screen_width = width;
         get_context().screen_height = height;
 
-        if miniquad::window::blocking_event_loop() {
-            miniquad::window::schedule_update();
+        if ::miniquad::window::blocking_event_loop() {
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -555,7 +582,7 @@ impl EventHandler for Stage {
         }
 
         if context.update_on.mouse_motion {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -571,7 +598,7 @@ impl EventHandler for Stage {
             .for_each(|arr| arr.push(MiniquadInputEvent::MouseWheel { x, y }));
 
         if context.update_on.mouse_wheel {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -591,7 +618,7 @@ impl EventHandler for Stage {
         }
 
         if context.update_on.mouse_down {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -610,7 +637,7 @@ impl EventHandler for Stage {
             context.mouse_position = Vec2::new(x, y);
         }
         if context.update_on.mouse_up {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -636,7 +663,7 @@ impl EventHandler for Stage {
         }
 
         if context.update_on.mouse_up {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -665,7 +692,7 @@ impl EventHandler for Stage {
                 self.mouse_motion_event(x, y);
             }
         } else if context.update_on.touch {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         };
 
         context
@@ -674,7 +701,7 @@ impl EventHandler for Stage {
             .for_each(|arr| arr.push(MiniquadInputEvent::Touch { phase, id, x, y }));
 
         if context.update_on.mouse_down {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -713,7 +740,7 @@ impl EventHandler for Stage {
             .as_ref()
             .map_or(context.update_on.key_down, |keys| keys.contains(&keycode))
         {
-            miniquad::window::schedule_update();
+            ::miniquad::window::schedule_update();
         }
     }
 
@@ -727,8 +754,8 @@ impl EventHandler for Stage {
             .iter_mut()
             .for_each(|arr| arr.push(MiniquadInputEvent::KeyUp { keycode, modifiers }));
 
-        if miniquad::window::blocking_event_loop() {
-            //miniquad::window::schedule_update();
+        if ::miniquad::window::blocking_event_loop() {
+            //::miniquad::window::schedule_update();
         }
     }
 
@@ -736,7 +763,7 @@ impl EventHandler for Stage {
         let _z = telemetry::ZoneGuard::new("Event::update");
 
         // Unless called every frame, cursor will not remain grabbed
-        miniquad::window::set_cursor_grab(get_context().cursor_grabbed);
+        ::miniquad::window::set_cursor_grab(get_context().cursor_grabbed);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -747,10 +774,10 @@ impl EventHandler for Stage {
 
     fn files_dropped_event(&mut self) {
         let context = get_context();
-        for i in 0..miniquad::window::dropped_file_count() {
+        for i in 0..::miniquad::window::dropped_file_count() {
             context.dropped_files.push(DroppedFile {
-                path: miniquad::window::dropped_file_path(i),
-                bytes: miniquad::window::dropped_file_bytes(i),
+                path: ::miniquad::window::dropped_file_path(i),
+                bytes: ::miniquad::window::dropped_file_bytes(i),
             });
         }
     }
@@ -782,7 +809,7 @@ impl EventHandler for Stage {
 
                     if exec::resume(&mut self.main_future).is_some() {
                         self.main_future = Box::pin(async move {});
-                        miniquad::window::quit();
+                        ::miniquad::window::quit();
                         return;
                     }
                     get_context().coroutines_context.update();
@@ -814,8 +841,8 @@ impl EventHandler for Stage {
             if telemetry::is_enabled() {
                 let _z = telemetry::ZoneGuard::new("glFinish/glFLush");
                 unsafe {
-                    miniquad::gl::glFlush();
-                    miniquad::gl::glFinish();
+                    ::miniquad::gl::glFlush();
+                    ::miniquad::gl::glFinish();
                 }
             }
         }
@@ -829,8 +856,8 @@ impl EventHandler for Stage {
         #[cfg(target_os = "android")]
         context.audio_context.resume();
         #[cfg(target_os = "android")]
-        if miniquad::window::blocking_event_loop() {
-            miniquad::window::schedule_update();
+        if ::miniquad::window::blocking_event_loop() {
+            ::miniquad::window::schedule_update();
         }
 
         context
@@ -863,7 +890,7 @@ impl EventHandler for Stage {
     fn quit_requested_event(&mut self) {
         let context = get_context();
         if context.prevent_quit_event {
-            miniquad::window::cancel_quit();
+            ::miniquad::window::cancel_quit();
             context.quit_requested = true;
         }
     }
@@ -883,7 +910,7 @@ pub mod conf {
 
     #[derive(Debug)]
     pub struct Conf {
-        pub miniquad_conf: miniquad::conf::Conf,
+        pub miniquad_conf: ::miniquad::conf::Conf,
         /// With miniquad_conf.platform.blocking_event_loop = true,
         /// next_frame().await will never finish and will wait forever with
         /// zero CPU usage.
@@ -907,7 +934,7 @@ pub mod conf {
     impl Default for Conf {
         fn default() -> Self {
             Self {
-                miniquad_conf: miniquad::conf::Conf::default(),
+                miniquad_conf: ::miniquad::conf::Conf::default(),
                 update_on: Some(UpdateTrigger::default()),
                 default_filter_mode: crate::FilterMode::Linear,
                 draw_call_vertex_capacity: 10000,
@@ -917,8 +944,8 @@ pub mod conf {
     }
 }
 
-impl From<miniquad::conf::Conf> for conf::Conf {
-    fn from(conf: miniquad::conf::Conf) -> conf::Conf {
+impl From<::miniquad::conf::Conf> for conf::Conf {
+    fn from(conf: ::miniquad::conf::Conf) -> conf::Conf {
         conf::Conf {
             miniquad_conf: conf,
             update_on: None,
@@ -937,7 +964,7 @@ impl Window {
     pub fn new(label: &str, future: impl Future<Output = ()> + 'static) {
         Window::from_config(
             conf::Conf {
-                miniquad_conf: miniquad::conf::Conf {
+                miniquad_conf: ::miniquad::conf::Conf {
                     window_title: label.to_string(),
                     ..Default::default()
                 },
@@ -955,7 +982,7 @@ impl Window {
             draw_call_vertex_capacity,
             draw_call_index_capacity,
         } = config.into();
-        miniquad::start(miniquad_conf, move || {
+        ::miniquad::start(miniquad_conf, move || {
             thread_assert::set_thread_id();
             let context = Context::new(
                 update_on.unwrap_or_default(),

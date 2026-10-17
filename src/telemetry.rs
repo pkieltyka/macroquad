@@ -276,17 +276,11 @@ impl Profiler {
     }
 }
 
-pub struct GpuQuery {
+struct GpuQuery {
     pub query: miniquad::graphics::ElapsedQuery,
     pub in_progress: bool,
     pub value: u64,
     pub force_resume: bool,
-}
-
-pub fn scene_allocated_memory() -> usize {
-    use crate::experimental::scene;
-
-    scene::allocated_memory()
 }
 
 /// ```skip
@@ -349,7 +343,7 @@ pub fn capture_frame() {
 #[derive(Clone, Debug)]
 pub struct DrawCallTelemetry {
     pub indices_count: usize,
-    pub texture: miniquad::TextureId,
+    pub(crate) texture: miniquad::TextureId,
 }
 
 pub(crate) fn track_drawcall(

@@ -16,10 +16,10 @@ void main() { gl_FragColor = tint * colors[1]; }
 
 fn assert_center(expected: [u8; 4]) {
     let image = get_screen_data();
-    let x = image.width as usize / 2;
-    let y = image.height as usize / 2;
-    let offset = (y * image.width as usize + x) * 4;
-    assert_eq!(&image.bytes[offset..offset + 4], &expected);
+    let x = image.width() as usize / 2;
+    let y = image.height() as usize / 2;
+    let offset = (y * image.width() as usize + x) * 4;
+    assert_eq!(&image.bytes()[offset..offset + 4], &expected);
 }
 
 fn solid_rect() {

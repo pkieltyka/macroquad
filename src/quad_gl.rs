@@ -2,7 +2,7 @@
 
 use miniquad::*;
 
-pub use miniquad::{FilterMode, TextureId as MiniquadTexture, UniformDesc};
+pub use miniquad::{FilterMode, UniformDesc};
 
 use crate::{color::Color, logging::warn, telemetry, texture::Texture2D, tobytes::ToBytes, Error};
 
@@ -27,25 +27,25 @@ struct DrawCall {
 
     clip: Option<(i32, i32, i32, i32)>,
     viewport: Option<(i32, i32, i32, i32)>,
-    texture: Option<miniquad::TextureId>,
+    texture: Option<Texture2D>,
 
     model: glam::Mat4,
 
     draw_mode: DrawMode,
     pipeline: GlPipeline,
     uniforms: Option<Vec<u8>>,
-    render_pass: Option<RenderPass>,
+    render_pass: Option<crate::texture::RenderPass>,
     capture: bool,
 }
 
 impl DrawCall {
     const fn new(
-        texture: Option<miniquad::TextureId>,
+        texture: Option<Texture2D>,
         model: glam::Mat4,
         draw_mode: DrawMode,
         pipeline: GlPipeline,
         uniforms: Option<Vec<u8>>,
-        render_pass: Option<RenderPass>,
+        render_pass: Option<crate::texture::RenderPass>,
     ) -> DrawCall {
         DrawCall {
             vertices_start: 0,
@@ -67,6 +67,8 @@ impl DrawCall {
 
 struct MagicSnapshotter {
     pipeline: Pipeline,
+    shader: ShaderId,
+    placeholder: TextureId,
     bindings: Bindings,
     pass: Option<RenderPass>,
 
@@ -181,80 +183,72 @@ impl MagicSnapshotter {
             BufferSource::slice(&indices),
         );
 
+        let placeholder = ctx.new_texture_from_rgba8(1, 1, &[0, 0, 0, 0]);
         let bindings = Bindings {
             vertex_buffers: vec![vertex_buffer],
             index_buffer,
-            images: vec![ctx.new_texture_from_rgba8(1, 1, &[0, 0, 0, 0])],
+            images: vec![placeholder],
         };
 
         MagicSnapshotter {
             pipeline,
+            shader,
+            placeholder,
             bindings,
             pass: None,
             screen_texture: None,
         }
     }
 
-    fn snapshot(&mut self, ctx: &mut dyn RenderingBackend, camera_render_pass: Option<RenderPass>) {
-        if let Some(camera_render_pass) = camera_render_pass {
-            let texture = ctx.render_pass_texture(camera_render_pass);
-            if self.pass.is_none() {
-                let miniquad::TextureParams {
-                    width,
-                    height,
-                    format,
-                    ..
-                } = ctx.texture_params(texture);
-                let color_img = ctx.new_render_texture(TextureParams {
-                    width,
-                    height,
-                    format,
-                    ..Default::default()
-                });
-
-                self.pass = Some(ctx.new_render_pass(color_img, None));
-                self.screen_texture = Some(color_img);
+    fn snapshot(
+        &mut self,
+        ctx: &mut dyn RenderingBackend,
+        camera: Option<&crate::texture::RenderPass>,
+    ) {
+        let (width, height) = camera.map_or_else(
+            || {
+                let (w, h) = miniquad::window::screen_size();
+                (w as u32, h as u32)
+            },
+            |pass| ctx.texture_size(pass.color_texture.raw_miniquad_id()),
+        );
+        crate::texture::validate_target_dimensions(width, height);
+        let stale = self
+            .screen_texture
+            .is_none_or(|texture| ctx.texture_size(texture) != (width, height))
+            || self.pass.is_some() != camera.is_some();
+        if stale {
+            if let Some(pass) = self.pass.take() {
+                ctx.delete_render_pass(pass);
             }
-
-            if self.bindings.images.len() == 0 {
-                self.bindings.images.push(texture);
-            } else {
-                self.bindings.images[0] = texture;
+            if let Some(texture) = self.screen_texture.take() {
+                ctx.delete_texture(texture);
             }
-            ctx.begin_pass(
-                Some(self.pass.unwrap()),
-                PassAction::clear_color(1.0, 0.0, 1.0, 1.),
-            );
+            let texture = ctx.new_render_texture(TextureParams {
+                width,
+                height,
+                ..Default::default()
+            });
+            self.screen_texture = Some(texture);
+            if camera.is_some() {
+                self.pass = Some(ctx.new_render_pass(texture, None));
+            }
+        }
+        if let Some(camera) = camera {
+            self.bindings.images[0] = camera.color_texture.raw_miniquad_id();
+            ctx.begin_pass(self.pass, PassAction::clear_color(1., 0., 1., 1.));
             ctx.apply_pipeline(&self.pipeline);
             ctx.apply_bindings(&self.bindings);
             ctx.draw(0, 6, 1);
             ctx.end_render_pass();
         } else {
-            let (screen_width, screen_height) = miniquad::window::screen_size();
-            if self.screen_texture.is_none()
-                || self
-                    .screen_texture
-                    .map(|t| {
-                        let (w, h) = ctx.texture_size(t);
-                        w != screen_width as _ || h != screen_height as _
-                    })
-                    .unwrap_or(false)
-            {
-                self.screen_texture = Some(ctx.new_render_texture(TextureParams {
-                    width: screen_width as _,
-                    height: screen_height as _,
-                    ..Default::default()
-                }));
-            }
-
-            let texture = self.screen_texture.unwrap();
-            Texture2D::unmanaged(texture).grab_screen();
+            crate::texture::copy_screen_to_texture(ctx, self.screen_texture.unwrap());
         }
     }
 }
 
 struct GlState {
-    texture: Option<miniquad::TextureId>,
+    texture: Option<Texture2D>,
     draw_mode: DrawMode,
     clip: Option<(i32, i32, i32, i32)>,
     viewport: Option<(i32, i32, i32, i32)>,
@@ -265,7 +259,7 @@ struct GlState {
     break_batching: bool,
     snapshotter: MagicSnapshotter,
 
-    render_pass: Option<RenderPass>,
+    render_pass: Option<crate::texture::RenderPass>,
     capture: bool,
 }
 
@@ -320,7 +314,8 @@ struct PipelineExt {
     uniforms: Vec<Uniform>,
     uniforms_data: UniformBuffer,
     textures: Vec<String>,
-    textures_data: BTreeMap<String, MiniquadTexture>,
+    textures_data: BTreeMap<String, Texture2D>,
+    shader: ShaderId,
 }
 
 impl Uniform {
@@ -530,6 +525,7 @@ impl PipelinesStorage {
 
         self.pipelines[id] = Some(PipelineExt {
             pipeline,
+            shader,
             wants_screen_texture,
             uniforms,
             uniforms_data: UniformBuffer::new(max_offset),
@@ -554,8 +550,12 @@ impl PipelinesStorage {
         self.pipelines[pip.0].as_mut().unwrap()
     }
 
-    fn delete_pipeline(&mut self, pip: GlPipeline) {
-        self.pipelines[pip.0] = None;
+    fn delete_pipeline(&mut self, ctx: &mut dyn RenderingBackend, pip: GlPipeline) {
+        if let Some(pipeline) = self.pipelines[pip.0].take() {
+            ctx.delete_pipeline(pipeline.pipeline);
+            ctx.delete_shader(pipeline.shader);
+            self.pipelines_amount -= 1;
+        }
     }
 }
 
@@ -645,6 +645,9 @@ impl QuadGl {
             ShaderSource::Msl { program } => program,
         };
         let wants_screen_texture = source.contains("_ScreenTexture");
+        if self.pipelines.pipelines.iter().all(Option::is_some) {
+            return Err("Pipelines amount exceeded".into());
+        }
         uniform_layout(&shader_meta.uniforms.uniforms)?;
         let shader = ctx.new_shader(shader, shader_meta)?;
         Ok(self.pipelines.make_pipeline(
@@ -660,8 +663,8 @@ impl QuadGl {
     pub(crate) fn clear(&mut self, ctx: &mut dyn miniquad::RenderingBackend, color: Color) {
         let clear = PassAction::clear_color(color.r, color.g, color.b, color.a);
 
-        if let Some(current_pass) = self.state.render_pass {
-            ctx.begin_pass(Some(current_pass), clear);
+        if let Some(current_pass) = self.state.render_pass.as_ref() {
+            ctx.begin_pass(Some(current_pass.raw_miniquad_id()), clear);
         } else {
             ctx.begin_default_pass(clear);
         }
@@ -672,7 +675,16 @@ impl QuadGl {
 
     /// Reset only draw calls state
     pub fn clear_draw_calls(&mut self) {
+        for call in &mut self.draw_calls {
+            call.texture = None;
+            call.render_pass = None;
+            call.uniforms = None;
+            call.vertices_count = 0;
+            call.indices_count = 0;
+        }
         self.draw_calls_count = 0;
+        self.batch_index_buffer.clear();
+        self.batch_vertex_buffer.clear();
     }
 
     /// Reset internal state to known default
@@ -680,8 +692,7 @@ impl QuadGl {
         self.state.clip = None;
         self.state.texture = None;
         self.state.model_stack = vec![glam::Mat4::IDENTITY];
-
-        self.draw_calls_count = 0;
+        self.clear_draw_calls();
     }
 
     pub fn draw(&mut self, ctx: &mut dyn miniquad::RenderingBackend, projection: glam::Mat4) {
@@ -718,8 +729,8 @@ impl QuadGl {
         {
             let pipeline = self.pipelines.get_quad_pipeline_mut(dc.pipeline);
 
-            let (width, height) = if let Some(render_pass) = dc.render_pass {
-                let render_texture = ctx.render_pass_texture(render_pass);
+            let (width, height) = if let Some(render_pass) = dc.render_pass.as_ref() {
+                let render_texture = ctx.render_pass_texture(render_pass.raw_miniquad_id());
                 let (width, height) = ctx.texture_size(render_texture);
                 (width, height)
             } else {
@@ -727,11 +738,13 @@ impl QuadGl {
             };
 
             if pipeline.wants_screen_texture {
-                self.state.snapshotter.snapshot(ctx, dc.render_pass);
+                self.state
+                    .snapshotter
+                    .snapshot(ctx, dc.render_pass.as_ref());
             }
 
-            if let Some(render_pass) = dc.render_pass {
-                ctx.begin_pass(Some(render_pass), PassAction::Nothing);
+            if let Some(render_pass) = dc.render_pass.as_ref() {
+                ctx.begin_pass(Some(render_pass.raw_miniquad_id()), PassAction::Nothing);
             } else {
                 ctx.begin_default_pass(PassAction::Nothing);
             }
@@ -751,7 +764,10 @@ impl QuadGl {
                 ),
             );
 
-            bindings.images[0] = dc.texture.unwrap_or(white_texture);
+            bindings.images[0] = dc
+                .texture
+                .as_ref()
+                .map_or(white_texture, Texture2D::raw_miniquad_id);
             bindings.images[1] = self
                 .state
                 .snapshotter
@@ -762,8 +778,8 @@ impl QuadGl {
                 .resize(2 + pipeline.textures.len(), white_texture);
 
             for (pos, name) in pipeline.textures.iter().enumerate() {
-                if let Some(texture) = pipeline.textures_data.get(name).copied() {
-                    bindings.images[2 + pos] = texture;
+                if let Some(texture) = pipeline.textures_data.get(name) {
+                    bindings.images[2 + pos] = texture.raw_miniquad_id();
                 }
             }
 
@@ -796,9 +812,11 @@ impl QuadGl {
             ctx.end_render_pass();
 
             if dc.capture {
-                telemetry::track_drawcall(&pipeline.pipeline, bindings, dc.indices_count);
+                telemetry::track_drawcall(ctx, &pipeline.pipeline, bindings, dc.indices_count);
             }
 
+            dc.texture = None;
+            dc.render_pass = None;
             dc.vertices_count = 0;
             dc.indices_count = 0;
             dc.vertices_start = 0;
@@ -810,27 +828,57 @@ impl QuadGl {
         self.batch_vertex_buffer.clear();
     }
 
+    pub(crate) fn shutdown(&mut self, ctx: &mut dyn RenderingBackend) {
+        self.clear_draw_calls();
+        self.state.texture = None;
+        self.state.render_pass = None;
+        self.draw_calls.clear();
+        for bindings in self.draw_calls_bindings.drain(..) {
+            for buffer in bindings.vertex_buffers {
+                ctx.delete_buffer(buffer);
+            }
+            ctx.delete_buffer(bindings.index_buffer);
+        }
+        let mut shaders = std::collections::HashSet::new();
+        for pipeline in &mut self.pipelines.pipelines {
+            if let Some(pipeline) = pipeline.take() {
+                ctx.delete_pipeline(pipeline.pipeline);
+                shaders.insert(pipeline.shader);
+            }
+        }
+        let snapshot = &mut self.state.snapshotter;
+        if let Some(pass) = snapshot.pass.take() {
+            ctx.delete_render_pass(pass);
+        }
+        if let Some(texture) = snapshot.screen_texture.take() {
+            ctx.delete_texture(texture);
+        }
+        for buffer in snapshot.bindings.vertex_buffers.drain(..) {
+            ctx.delete_buffer(buffer);
+        }
+        ctx.delete_buffer(snapshot.bindings.index_buffer);
+        ctx.delete_texture(snapshot.placeholder);
+        ctx.delete_pipeline(snapshot.pipeline);
+        shaders.insert(snapshot.shader);
+        for shader in shaders {
+            ctx.delete_shader(shader);
+        }
+        ctx.delete_texture(self.white_texture);
+    }
+
     pub(crate) fn capture(&mut self, capture: bool) {
         self.state.capture = capture;
     }
 
-    pub fn get_projection_matrix(&self) -> glam::Mat4 {
-        // get_projection_matrix is a way plugins used to get macroquad's current projection
-        // back in the days when projection was a part of static batcher
-        // now it is not, so here we go with this hack
-
-        crate::get_context().projection_matrix()
-    }
-
-    pub const fn get_active_render_pass(&self) -> Option<RenderPass> {
-        self.state.render_pass
+    pub fn get_active_render_pass(&self) -> Option<crate::texture::RenderPass> {
+        self.state.render_pass.clone()
     }
 
     pub const fn is_depth_test_enabled(&self) -> bool {
         self.state.depth_test_enable
     }
 
-    pub fn render_pass(&mut self, render_pass: Option<RenderPass>) {
+    pub fn render_pass(&mut self, render_pass: Option<crate::texture::RenderPass>) {
         self.state.render_pass = render_pass;
     }
 
@@ -839,8 +887,7 @@ impl QuadGl {
     }
 
     pub fn texture(&mut self, texture: Option<&Texture2D>) {
-        let ctx = crate::get_context();
-        self.state.texture = texture.map(|t| ctx.raw_miniquad_id(&t.texture));
+        self.state.texture = texture.cloned();
     }
 
     pub fn scissor(&mut self, clip: Option<(i32, i32, i32, i32)>) {
@@ -855,8 +902,8 @@ impl QuadGl {
         self.state.viewport.unwrap_or((
             0,
             0,
-            crate::window::screen_width() as _,
-            crate::window::screen_height() as _,
+            miniquad::window::screen_size().0 as _,
+            miniquad::window::screen_size().1 as _,
         ))
     }
 
@@ -927,15 +974,15 @@ impl QuadGl {
 
             if self.draw_calls_count >= self.draw_calls.len() {
                 self.draw_calls.push(DrawCall::new(
-                    self.state.texture,
+                    self.state.texture.clone(),
                     self.state.model(),
                     self.state.draw_mode,
                     pip,
                     uniforms.clone(),
-                    self.state.render_pass,
+                    self.state.render_pass.clone(),
                 ));
             }
-            self.draw_calls[self.draw_calls_count].texture = self.state.texture;
+            self.draw_calls[self.draw_calls_count].texture = self.state.texture.clone();
             self.draw_calls[self.draw_calls_count].uniforms = uniforms;
             self.draw_calls[self.draw_calls_count].vertices_count = 0;
             self.draw_calls[self.draw_calls_count].indices_count = 0;
@@ -943,7 +990,7 @@ impl QuadGl {
             self.draw_calls[self.draw_calls_count].viewport = self.state.viewport;
             self.draw_calls[self.draw_calls_count].model = self.state.model();
             self.draw_calls[self.draw_calls_count].pipeline = pip;
-            self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass;
+            self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass.clone();
             self.draw_calls[self.draw_calls_count].capture = self.state.capture;
             self.draw_calls[self.draw_calls_count].indices_start = self.batch_index_buffer.len();
             self.draw_calls[self.draw_calls_count].vertices_start = self.batch_vertex_buffer.len();
@@ -960,11 +1007,35 @@ impl QuadGl {
         dc.vertices_count += vertices.len();
         dc.indices_count += indices.len();
 
-        dc.texture = self.state.texture;
+        dc.texture = self.state.texture.clone();
     }
 
-    pub fn delete_pipeline(&mut self, pipeline: GlPipeline) {
-        self.pipelines.delete_pipeline(pipeline);
+    pub fn delete_pipeline(&mut self, ctx: &mut dyn RenderingBackend, pipeline: GlPipeline) {
+        if self.state.pipeline == Some(pipeline) {
+            self.state.pipeline = None;
+        }
+        self.pipelines.delete_pipeline(ctx, pipeline);
+    }
+
+    pub(crate) fn set_uniform_bytes(
+        &mut self,
+        pipeline: GlPipeline,
+        name: &str,
+        bytes: &[u8],
+        scalar: bool,
+    ) {
+        self.state.break_batching = true;
+        let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
+        if let Some(uniform) = pipeline
+            .uniforms
+            .iter()
+            .find(|uniform| uniform.name == name)
+        {
+            if scalar && uniform.byte_size != uniform.uniform_type.size() {
+                return;
+            }
+            uniform.set_bytes(&mut pipeline.uniforms_data, bytes);
+        }
     }
 
     pub fn set_uniform<T: ToBytes>(&mut self, pipeline: GlPipeline, name: &str, uniform: T) {
@@ -999,11 +1070,7 @@ impl QuadGl {
                     name, pipeline.textures
                 )
             });
-        let quad_texture = texture.raw_miniquad_id();
-        *pipeline
-            .textures_data
-            .entry(name.to_owned())
-            .or_insert(quad_texture) = quad_texture;
+        pipeline.textures_data.insert(name.to_owned(), texture);
     }
 
     pub(crate) fn update_drawcall_capacity(

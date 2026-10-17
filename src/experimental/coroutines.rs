@@ -249,6 +249,15 @@ pub fn stop_all_coroutines() {
     drop(removed);
 }
 
+pub(crate) fn shutdown() {
+    if shutting_down() {
+        return;
+    }
+    SHUTTING_DOWN.with(|closing| closing.set(true));
+    let tasks = with_scheduler(|scheduler| std::mem::take(&mut scheduler.tasks));
+    drop(tasks);
+}
+
 struct PollGuard {
     id: u64,
     previous_delta: Option<f64>,
@@ -451,6 +460,32 @@ mod tests {
         update(0.01);
         assert_eq!(reader.retrieve(), Some(()));
         assert_eq!(active_coroutines_count(), 0);
+    }
+
+    #[test]
+    fn explicit_shutdown_cancels_tasks_spawned_by_destructors() {
+        std::thread::spawn(|| {
+            let drops = Rc::new(Cell::new(0));
+            let count = drops.clone();
+            let capture = OnDrop::new(move || {
+                let inner = OnDrop::new(move || count.set(count.get() + 1));
+                let task = start_coroutine(async move {
+                    inner.keep_alive();
+                });
+                assert!(task.is_done());
+            });
+            let task = start_coroutine(async move {
+                capture.keep_alive();
+                std::future::pending::<()>().await;
+            });
+            update(0.);
+            shutdown();
+            assert!(task.is_done());
+            assert_eq!(drops.get(), 1);
+            assert_eq!(active_coroutines_count(), 0);
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

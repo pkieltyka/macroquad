@@ -1,7 +1,6 @@
 //! 2D and 3D camera.
 
 use crate::{
-    get_context,
     math::Rect,
     prelude::RenderPass,
     texture::RenderTarget,
@@ -277,58 +276,57 @@ impl Camera for Camera3D {
 
 /// Set active 2D or 3D camera.
 pub fn set_camera(camera: &dyn Camera) {
-    let context = get_context();
-
-    // flush previous camera draw calls
-    context.perform_render_passes();
-
-    context
-        .gl
-        .render_pass(camera.render_pass().map(|rt| rt.raw_miniquad_id()));
-
-    context.gl.viewport(camera.viewport());
-    context.gl.depth_test(camera.depth_enabled());
-    context.camera_matrix = Some(camera.matrix());
+    let render_pass = camera.render_pass();
+    let viewport = camera.viewport();
+    let depth = camera.depth_enabled();
+    let matrix = camera.matrix();
+    crate::with_context(|context| {
+        context.perform_render_passes();
+        context.gl.render_pass(render_pass);
+        context.gl.viewport(viewport);
+        context.gl.depth_test(depth);
+        context.camera_matrix = Some(matrix);
+    })
 }
 
 /// Reset default 2D camera mode.
 pub fn set_default_camera() {
-    let context = get_context();
+    crate::with_context(|context| {
+        // flush previous camera draw calls
+        context.perform_render_passes();
 
-    // flush previous camera draw calls
-    context.perform_render_passes();
-
-    context.gl.render_pass(None);
-    context.gl.viewport(None);
-    context.gl.depth_test(false);
-    context.camera_matrix = None;
+        context.gl.render_pass(None);
+        context.gl.viewport(None);
+        context.gl.depth_test(false);
+        context.camera_matrix = None;
+    })
 }
 
 pub(crate) struct CameraState {
-    render_pass: Option<miniquad::RenderPass>,
+    render_pass: Option<RenderPass>,
     depth_test: bool,
     matrix: Option<Mat4>,
 }
 
 pub fn push_camera_state() {
-    let context = get_context();
-
-    let camera_state = CameraState {
-        render_pass: context.gl.get_active_render_pass(),
-        depth_test: context.gl.is_depth_test_enabled(),
-        matrix: context.camera_matrix,
-    };
-    context.camera_stack.push(camera_state);
+    crate::with_context(|context| {
+        let camera_state = CameraState {
+            render_pass: context.gl.get_active_render_pass(),
+            depth_test: context.gl.is_depth_test_enabled(),
+            matrix: context.camera_matrix,
+        };
+        context.camera_stack.push(camera_state);
+    })
 }
 
 pub fn pop_camera_state() {
-    let context = get_context();
+    crate::with_context(|context| {
+        if let Some(camera_state) = context.camera_stack.pop() {
+            context.perform_render_passes();
 
-    if let Some(camera_state) = context.camera_stack.pop() {
-        context.perform_render_passes();
-
-        context.gl.render_pass(camera_state.render_pass);
-        context.gl.depth_test(camera_state.depth_test);
-        context.camera_matrix = camera_state.matrix;
-    }
+            context.gl.render_pass(camera_state.render_pass);
+            context.gl.depth_test(camera_state.depth_test);
+            context.camera_matrix = camera_state.matrix;
+        }
+    })
 }

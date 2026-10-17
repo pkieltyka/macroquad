@@ -4,8 +4,8 @@
 //!
 //! The UI entrypoint is `root_ui()` call.
 //! ```ignore
-//! root_ui().label(None, "hello megaui");
-//! if root_ui().button(None, "Push me") {
+//! root_ui(|ui| ui.label(None, "hello megaui"));
+//! if root_ui(|ui| ui.button(None, "Push me")) {
 //!    println!("pushed");
 //! }
 //! ```
@@ -33,34 +33,19 @@ pub(crate) use render::ElementState;
 
 use std::{
     borrow::Cow,
-    ops::DerefMut,
     sync::{Arc, Mutex},
 };
 
 /// Root UI. Widgets drawn with the root ui will be always presented at the end of the frame with a "default" camera.
-/// UI space would be a "default" screen space (0..screen_width(), 0..screen_height())
-pub fn root_ui() -> impl DerefMut<Target = Ui> {
-    crate::get_context().ui_context.ui.borrow_mut()
-}
-
-/// Current camera world space UI.
-/// Widgets will be drawn either at the end of the frame or just before next "set_camera" clal
-/// UI space would be equal to the camera space, widgets will be drawn at the plane with Y up X right and Z = 0.
-/// Note that windows focus queue, input focus etc is shared across all cameras.
-/// So this:
+/// UI space is the default screen space (0..screen_width(), 0..screen_height()).
+/// The UI is exclusive only for this closure. Graphics and input APIs remain
+/// available inside it; recursively entering the same UI is rejected.
 ///
-/// ```skip
-/// camera_ui().draw_window();
-/// set_camera(..);
-/// camera_ui().draw_window();
-/// root_ui().draw_window();
+/// ```compile_fail
+/// let reference = macroquad::ui::root_ui(|ui| ui.get_bool(1));
 /// ```
-/// Will result 3 windows on the screen, all in different cameras and probably looking differently,
-/// but only one of them would be focused.
-#[doc(hidden)]
-#[allow(unreachable_code)]
-pub fn camera_ui() -> impl DerefMut<Target = Ui> {
-    unimplemented!() as &'static mut Ui
+pub fn root_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
+    ui_context::with(|context| f(&mut context.ui))
 }
 
 use crate::{
@@ -647,12 +632,17 @@ impl InputHandler for Ui {
 }
 
 impl Ui {
-    pub fn new(
+    pub(crate) fn new(
         ctx: &mut dyn miniquad::RenderingBackend,
+        owner: std::rc::Rc<crate::GraphicsOwner>,
         screen_width: f32,
         screen_height: f32,
     ) -> Ui {
-        let atlas = Arc::new(Mutex::new(Atlas::new(ctx, miniquad::FilterMode::Nearest)));
+        let atlas = Arc::new(Mutex::new(Atlas::new(
+            ctx,
+            owner,
+            miniquad::FilterMode::Nearest,
+        )));
         let font =
             crate::text::Font::load_from_bytes(atlas.clone(), include_bytes!("ProggyClean.ttf"))
                 .unwrap();
@@ -1199,7 +1189,7 @@ pub(crate) mod ui_context {
     use std::rc::Rc;
 
     pub(crate) struct UiContext {
-        pub ui: Rc<RefCell<megaui::Ui>>,
+        pub ui: megaui::Ui,
         ui_draw_list: Vec<megaui::DrawList>,
         material: Option<Material>,
     }
@@ -1207,13 +1197,14 @@ pub(crate) mod ui_context {
     impl UiContext {
         pub(crate) fn new(
             ctx: &mut dyn miniquad::RenderingBackend,
+            owner: Rc<crate::GraphicsOwner>,
             screen_width: f32,
             screen_height: f32,
         ) -> UiContext {
-            let ui = megaui::Ui::new(ctx, screen_width, screen_height);
+            let ui = megaui::Ui::new(ctx, owner, screen_width, screen_height);
 
             UiContext {
-                ui: Rc::new(RefCell::new(ui)),
+                ui,
                 ui_draw_list: vec![],
                 material: None,
             }
@@ -1224,7 +1215,7 @@ pub(crate) mod ui_context {
 
             let mouse_position = mouse_position();
 
-            let mut ui = self.ui.borrow_mut();
+            let ui = &mut self.ui;
             ui.mouse_move(mouse_position);
 
             if is_mouse_button_pressed(MouseButton::Left) {
@@ -1280,79 +1271,76 @@ pub(crate) mod ui_context {
             ui.mouse_wheel(wheel_x, -wheel_y);
         }
 
-        pub(crate) fn draw(
-            &mut self,
-            ctx: &mut dyn miniquad::RenderingBackend,
-            quad_gl: &mut QuadGl,
-        ) {
-            let mut ui = self.ui.borrow_mut();
+        pub(crate) fn draw(&mut self) {
             self.ui_draw_list.clear();
-            ui.render(&mut self.ui_draw_list);
-
-            // The material waits for something to draw, so a game that never
-            // draws the UI never compiles its shader.
+            self.ui.render(&mut self.ui_draw_list);
             if !self.ui_draw_list.is_empty() {
-                // TODO: this belongs to new and waits for cleaning up context initialization mess
-                let material = self.material.get_or_insert_with(|| {
-                    load_material(
-                        match ctx.info().backend {
-                            Backend::OpenGl => ShaderSource::Glsl {
-                                vertex: VERTEX_SHADER,
-                                fragment: FRAGMENT_SHADER,
+                if self.material.is_none() {
+                    self.material = Some(
+                        load_material(
+                            match crate::window::rendering_backend() {
+                                Backend::OpenGl => ShaderSource::Glsl {
+                                    vertex: VERTEX_SHADER,
+                                    fragment: FRAGMENT_SHADER,
+                                },
+                                Backend::Metal => ShaderSource::Msl {
+                                    program: METAL_SHADER,
+                                },
                             },
-                            Backend::Metal => ShaderSource::Msl {
-                                program: METAL_SHADER,
-                            },
-                        },
-                        MaterialParams {
-                            pipeline_params: PipelineParams {
-                                color_blend: Some(BlendState::new(
-                                    Equation::Add,
-                                    BlendFactor::Value(BlendValue::SourceAlpha),
-                                    BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
-                                )),
+                            MaterialParams {
+                                pipeline_params: PipelineParams {
+                                    color_blend: Some(BlendState::new(
+                                        Equation::Add,
+                                        BlendFactor::Value(BlendValue::SourceAlpha),
+                                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                                    )),
+                                    ..Default::default()
+                                },
                                 ..Default::default()
                             },
-                            ..Default::default()
-                        },
-                    )
-                    .unwrap()
-                });
-
-                let mut ui_draw_list = vec![];
-
-                std::mem::swap(&mut ui_draw_list, &mut self.ui_draw_list);
-
-                let mut atlas = ui.atlas.lock().unwrap();
-                let font_texture = atlas.texture();
-                quad_gl.texture(Some(&Texture2D::unmanaged(font_texture)));
-
-                gl_use_material(material);
-
-                for draw_command in &ui_draw_list {
-                    if let Some(ref texture) = draw_command.texture {
-                        quad_gl.texture(Some(texture));
-                    } else {
-                        quad_gl.texture(Some(&Texture2D::unmanaged(font_texture)));
-                    }
-
-                    quad_gl.scissor(
-                        draw_command.clipping_zone.map(|rect| {
-                            (rect.x as i32, rect.y as i32, rect.w as i32, rect.h as i32)
-                        }),
+                        )
+                        .unwrap(),
                     );
-                    quad_gl.draw_mode(DrawMode::Triangles);
-                    quad_gl.geometry(&draw_command.vertices[..], &draw_command.indices);
                 }
-
-                std::mem::swap(&mut ui_draw_list, &mut self.ui_draw_list);
+                let font_texture = self.ui.atlas.lock().unwrap().texture();
+                let font_texture = Texture2D::unmanaged(font_texture);
+                crate::with_context(|context| {
+                    let gl = &mut context.gl;
+                    gl.pipeline(Some(self.material.as_ref().unwrap().pipeline()));
+                    for command in &self.ui_draw_list {
+                        gl.texture(Some(command.texture.as_ref().unwrap_or(&font_texture)));
+                        gl.scissor(
+                            command
+                                .clipping_zone
+                                .map(|r| (r.x as i32, r.y as i32, r.w as i32, r.h as i32)),
+                        );
+                        gl.draw_mode(DrawMode::Triangles);
+                        gl.geometry(&command.vertices, &command.indices);
+                    }
+                });
             }
-            quad_gl.texture(None);
-
-            gl_use_default_material();
-
-            ui.new_frame(get_frame_time());
+            crate::with_context(|context| {
+                context.gl.texture(None);
+                context.gl.pipeline(None);
+            });
+            self.ui.new_frame(get_frame_time());
         }
+    }
+
+    thread_local! { static UI: RefCell<Option<Rc<crate::ownership::Scoped<UiContext>>>> = const { RefCell::new(None) }; }
+    pub(crate) fn init(owner: Rc<crate::GraphicsOwner>, width: f32, height: f32) {
+        let context = owner.with(|backend| UiContext::new(backend, owner.clone(), width, height));
+        UI.with(|slot| *slot.borrow_mut() = Some(Rc::new(crate::ownership::Scoped::new(context))));
+    }
+    pub(crate) fn with<R>(f: impl FnOnce(&mut UiContext) -> R) -> R {
+        let owner = UI
+            .with(|slot| slot.borrow().as_ref().cloned())
+            .expect("UI is not initialized on this thread");
+        owner.with(f)
+    }
+    pub(crate) fn shutdown() {
+        let owner = UI.with(|slot| slot.borrow_mut().take());
+        drop(owner);
     }
 
     #[cfg(test)]
@@ -1363,27 +1351,24 @@ pub(crate) mod ui_context {
         #[ignore = "requires a graphics display; run with --ignored under Xvfb"]
         fn ui_material_is_lazy_and_reused_after_empty_frames() {
             crate::Window::new("UI material regression", async {
-                assert!(crate::get_context().ui_context.material.is_none());
+                assert!(with(|context| context.material.is_none()));
                 next_frame().await;
-                assert!(crate::get_context().ui_context.material.is_none());
+                assert!(with(|context| context.material.is_none()));
                 next_frame().await;
-                assert!(crate::get_context().ui_context.material.is_none());
+                assert!(with(|context| context.material.is_none()));
 
                 clear_background(BLACK);
                 let texture = Texture2D::from_rgba8(1, 1, &[0, 0, 255, 255]);
-                crate::ui::root_ui().label(None, "first UI frame");
-                crate::ui::root_ui()
-                    .canvas()
-                    .image(Rect::new(200., 10., 32., 32.), &texture);
-                crate::ui::root_ui()
-                    .canvas()
-                    .rect(Rect::new(10., 80., 32., 32.), None, WHITE);
+                crate::ui::root_ui(|ui| ui.label(None, "first UI frame"));
+                crate::ui::root_ui(|ui| {
+                    ui.canvas().image(Rect::new(200., 10., 32., 32.), &texture)
+                });
+                crate::ui::root_ui(|ui| {
+                    ui.canvas().rect(Rect::new(10., 80., 32., 32.), None, WHITE)
+                });
                 // Read before the platform swaps buffers; the next back buffer's
                 // contents are unspecified after next_frame().
-                let context = crate::get_context();
-                context
-                    .ui_context
-                    .draw(crate::get_quad_context(), &mut context.gl);
+                with(|context| context.draw());
                 let rendered = get_screen_data();
                 assert!(
                     rendered
@@ -1401,21 +1386,21 @@ pub(crate) mod ui_context {
                         .count()
                         >= 900
                 );
-                let first = crate::get_context().ui_context.material.clone().unwrap();
-                assert!(!crate::get_context().ui_context.ui_draw_list.is_empty());
+                let first = with(|context| context.material.clone().unwrap());
+                assert!(!with(|context| context.ui_draw_list.is_empty()));
                 next_frame().await;
-                assert!(crate::get_context().ui_context.ui_draw_list.is_empty());
+                assert!(with(|context| context.ui_draw_list.is_empty()));
                 assert_eq!(
-                    crate::get_context().ui_context.material.as_ref(),
-                    Some(&first)
+                    with(|context| context.material.clone()),
+                    Some(first.clone())
                 );
 
-                crate::ui::root_ui().label(None, "UI after an empty frame");
+                crate::ui::root_ui(|ui| ui.label(None, "UI after an empty frame"));
                 next_frame().await;
-                assert!(!crate::get_context().ui_context.ui_draw_list.is_empty());
+                assert!(!with(|context| context.ui_draw_list.is_empty()));
                 assert_eq!(
-                    crate::get_context().ui_context.material.as_ref(),
-                    Some(&first)
+                    with(|context| context.material.clone()),
+                    Some(first.clone())
                 );
             });
         }
@@ -1425,10 +1410,12 @@ pub(crate) mod ui_context {
 
     impl megaui::ClipboardObject for ClipboardObject {
         fn get(&self) -> Option<String> {
+            crate::thread_assert::same_thread();
             miniquad::window::clipboard_get()
         }
 
         fn set(&mut self, data: &str) {
+            crate::thread_assert::same_thread();
             miniquad::window::clipboard_set(data);
         }
     }

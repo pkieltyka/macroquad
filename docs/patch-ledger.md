@@ -63,6 +63,17 @@ reconstruction check are in [vendor/README.md](../vendor/README.md).
 Zubspace arena/LVZ texture lifetimes and record separate camera/metadata/memory
 measurement work. No camera or atlas optimization is included.
 
+## X11 property and render-pass boundaries
+
+Local commit `f347a865a939fcdb7b4ba8cc3a5e86c13546fb4b` checks Xlib reply
+format/count arithmetic and null/short clipboard properties before copying.
+It also makes GL render-pass deletion release FBOs without deleting independently
+owned attachments, handles null GL version strings, detects WebGL1 version
+prefixes correctly and selects supported WebGL2 depth formats. These are local
+boundary fixes rather than imports of an unrelated backend revision.
+[Vendor provenance](../vendor/README.md) records the reconstructible patch;
+direct native/WebGL1/WebGL2 fixtures cover attachment reuse and capabilities.
+
 ## Independent coroutine and audio lifetimes
 
 Adapt the audio-isolation direction in [#973](https://github.com/not-fl3/macroquad/pull/973),
@@ -109,6 +120,23 @@ Zubspace already depends directly on image 0.25.10; actual graph consolidation
 and release size/startup benefits are verified during fork integration, not
 assumed here. Preserve the vendored Miniquad patch; this change does not
 establish closure of Macroquad or font-parser advisories.
+
+## Scoped graphics and supported-surface ownership
+
+Local remediation of [#333](https://github.com/not-fl3/macroquad/issues/333)
+replaces unrestricted mutable globals with scoped TLS context/backend/UI owners.
+GPU guards retain their originating owner and enqueue deletion; draw, camera,
+material and capture leases retain required resources until flush/reset. The
+non-owning backend pass patch above allows attachment clones to outlive targets.
+Camera/input/uniform callbacks run outside context access, UI uses
+`root_ui(|ui| ...)`, and window entry is atomic/single-use with explicit live
+shutdown. The unused unsafe texture slot map/raw waker and telemetry parent
+pointers are removed. GPU timing is explicitly unavailable rather than zero.
+
+These are local ownership adaptations, not a wholesale import of #973 or a
+standalone advisory closure claim. [Security inventory](security.md) records
+remaining foreign contracts, intentional API breaks and actual regression entry
+points. Final accumulated review and matching Zubspace acceptance remain gates.
 
 ## Reviewed deferrals and rejections
 

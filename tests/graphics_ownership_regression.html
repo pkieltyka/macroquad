@@ -1,0 +1,61 @@
+<!doctype html>
+<canvas id="glcanvas" width="800" height="600" tabindex="1"></canvas>
+<script>
+window.evidence = { messages: [], errors: [], baselineTextures: null, finalTextures: null, shutdownTextures: null, rafRequested: 0, rafDelivered: 0 };
+const liveTextures = new Set();
+const requestFrame = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = callback => {
+    evidence.rafRequested++;
+    return requestFrame(time => { evidence.rafDelivered++; callback(time); });
+};
+setInterval(() => { evidence.visibility = document.visibilityState; evidence.focused = document.hasFocus(); }, 500);
+for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+    const create = prototype.createTexture;
+    prototype.createTexture = function (...args) { const texture = create.apply(this, args); if (texture) liveTextures.add(texture); return texture; };
+    const remove = prototype.deleteTexture;
+    prototype.deleteTexture = function (texture) {
+        if (texture && !liveTextures.delete(texture)) evidence.errors.push("Duplicate/unowned texture deletion");
+        return remove.call(this, texture);
+    };
+}
+for (const type of ["log", "info", "warn", "error"]) {
+    const original = console[type];
+    console[type] = (...args) => {
+        const message = args.join(" ");
+        if (message.includes("graphics ownership regression: callbacks ready")) {
+            // Dispatch in a later event-loop task, matching real browser input.
+            setTimeout(() => {
+                for (const type of ["touchstart", "touchend"]) {
+                    const event = new Event(type, { cancelable: true });
+                    Object.defineProperty(event, "changedTouches", { value: [{ identifier: 7, clientX: 42, clientY: 43 }] });
+                    document.querySelector("#glcanvas").dispatchEvent(event);
+                }
+            }, 30);
+        }
+        if (message.includes("graphics ownership regression: baseline")) evidence.baselineTextures = liveTextures.size;
+        if (message.includes("graphics ownership regression: passed")) {
+            evidence.finalTextures = liveTextures.size;
+            if (evidence.finalTextures !== evidence.baselineTextures) evidence.errors.push(`Retained textures: baseline ${evidence.baselineTextures}, final ${evidence.finalTextures}`);
+            const error = gl.getError();
+            if (error !== gl.NO_ERROR) evidence.errors.push(`WebGL error ${error}`);
+            setTimeout(() => {
+                evidence.shutdownTextures = liveTextures.size;
+                if (evidence.shutdownTextures !== 0) evidence.errors.push(`Textures remain after engine shutdown: ${evidence.shutdownTextures}`);
+                evidence.messages.push(message);
+            }, 100);
+            original.apply(console, args);
+            return;
+        }
+        evidence.messages.push(message);
+        original.apply(console, args);
+    };
+}
+window.onerror = message => evidence.errors.push(String(message));
+window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
+(async () => {
+    const runtime = new URLSearchParams(location.search).get("runtime");
+    if (!runtime) throw new Error("Provide paired runtime with ?runtime=/path/to/bundle.js");
+    await new Promise((resolve, reject) => { const script = document.createElement("script"); script.src = runtime; script.onload = resolve; script.onerror = reject; document.head.append(script); });
+    load("/target/wasm32-unknown-unknown/debug/examples/graphics_ownership_regression.wasm");
+})().catch(error => evidence.errors.push(String(error)));
+</script>

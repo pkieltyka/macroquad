@@ -1,6 +1,6 @@
 //! 3D shapes and models, loading 3d models from files, drawing 3D primitives.
 
-use crate::{color::Color, get_context};
+use crate::color::Color;
 
 use crate::{quad_gl::DrawMode, texture::Texture2D};
 use glam::{vec2, vec3, vec4, Quat, Vec2, Vec3, Vec4};
@@ -45,30 +45,32 @@ pub struct Mesh {
 }
 
 pub fn draw_mesh(mesh: &Mesh) {
-    let context = get_context();
-
-    context.gl.texture(mesh.texture.as_ref());
-    context.gl.draw_mode(DrawMode::Triangles);
-    context.gl.geometry(&mesh.vertices[..], &mesh.indices[..]);
+    crate::with_context(|context| {
+        context.gl.texture(mesh.texture.as_ref());
+        context.gl.draw_mode(DrawMode::Triangles);
+        context.gl.geometry(&mesh.vertices[..], &mesh.indices[..]);
+    })
 }
 
 fn draw_quad(vertices: [Vertex; 4]) {
-    let context = get_context();
-    let indices = [0, 1, 2, 0, 2, 3];
-    context.gl.draw_mode(DrawMode::Triangles);
-    context.gl.geometry(&vertices, &indices);
+    crate::with_context(|context| {
+        let indices = [0, 1, 2, 0, 2, 3];
+        context.gl.draw_mode(DrawMode::Triangles);
+        context.gl.geometry(&vertices, &indices);
+    })
 }
 
 pub fn draw_line_3d(start: Vec3, end: Vec3, color: Color) {
-    let context = get_context();
-    let uv = vec2(0., 0.);
-    let indices = [0, 1];
+    crate::with_context(|context| {
+        let uv = vec2(0., 0.);
+        let indices = [0, 1];
 
-    let line = [Vertex::new2(start, uv, color), Vertex::new2(end, uv, color)];
+        let line = [Vertex::new2(start, uv, color), Vertex::new2(end, uv, color)];
 
-    context.gl.texture(None);
-    context.gl.draw_mode(DrawMode::Lines);
-    context.gl.geometry(&line, &indices);
+        context.gl.texture(None);
+        context.gl.draw_mode(DrawMode::Lines);
+        context.gl.geometry(&line, &indices);
+    })
 }
 
 /// Draw a grid centered at (0, 0, 0)
@@ -123,8 +125,9 @@ pub fn draw_plane(center: Vec3, size: Vec2, texture: Option<&Texture2D>, color: 
     let v4 = Vertex::new2(center + vec3(size.x, 0., -size.y), vec2(1., 0.), color);
 
     {
-        let context = get_context();
-        context.gl.texture(texture);
+        crate::with_context(|context| {
+            context.gl.texture(texture);
+        })
     }
     draw_quad([v1, v2, v3, v4]);
 }
@@ -161,8 +164,9 @@ pub fn draw_affine_parallelogram(
     let v4 = Vertex::new2(offset + e2, vec2(1., 0.), color);
 
     {
-        let context = get_context();
-        context.gl.texture(texture);
+        crate::with_context(|context| {
+            context.gl.texture(texture);
+        })
     }
     draw_quad([v1, v2, v3, v4]);
 }
@@ -211,8 +215,7 @@ pub fn draw_affine_parallelepiped(
 }
 
 pub fn draw_cube(position: Vec3, size: Vec3, texture: Option<&Texture2D>, color: Color) {
-    let context = get_context();
-    context.gl.texture(texture);
+    crate::with_context(|context| context.gl.texture(texture));
 
     let (x, y, z) = (position.x, position.y, position.z);
     let (width, height, length) = (size.x, size.y, size.z);
@@ -462,84 +465,84 @@ pub fn draw_sphere_ex(
     color: Color,
     params: DrawSphereParams,
 ) {
-    let context = get_context();
+    crate::with_context(|context| {
+        let rings = params.rings;
+        let slices = params.slices;
 
-    let rings = params.rings;
-    let slices = params.slices;
+        let scale = vec3(radius, radius, radius);
 
-    let scale = vec3(radius, radius, radius);
+        context.gl.texture(texture);
+        context.gl.draw_mode(params.draw_mode);
 
-    context.gl.texture(texture);
-    context.gl.draw_mode(params.draw_mode);
+        for i in 0..rings + 1 {
+            for j in 0..slices {
+                use std::f32::consts::PI;
 
-    for i in 0..rings + 1 {
-        for j in 0..slices {
-            use std::f32::consts::PI;
+                let pi34 = PI / 2. * 3.;
+                let pi2 = PI * 2.;
+                let i = i as f32;
+                let j = j as f32;
+                let rings: f32 = rings as _;
+                let slices: f32 = slices as _;
 
-            let pi34 = PI / 2. * 3.;
-            let pi2 = PI * 2.;
-            let i = i as f32;
-            let j = j as f32;
-            let rings: f32 = rings as _;
-            let slices: f32 = slices as _;
+                let v1 = vec3(
+                    (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).sin(),
+                    (pi34 + (PI / (rings + 1.)) * i).sin(),
+                    (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).cos(),
+                );
+                let uv1 = vec2(i / rings, j / slices);
+                let v2 = vec3(
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).cos(),
+                );
+                let uv2 = vec2((i + 1.) / rings, (j + 1.) / slices);
+                let v3 = vec3(
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * (j * pi2 / slices).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * (j * pi2 / slices).cos(),
+                );
+                let uv3 = vec2((i + 1.) / rings, j / slices);
 
-            let v1 = vec3(
-                (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).sin(),
-                (pi34 + (PI / (rings + 1.)) * i).sin(),
-                (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).cos(),
-            );
-            let uv1 = vec2(i / rings, j / slices);
-            let v2 = vec3(
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).cos(),
-            );
-            let uv2 = vec2((i + 1.) / rings, (j + 1.) / slices);
-            let v3 = vec3(
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * (j * pi2 / slices).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * (j * pi2 / slices).cos(),
-            );
-            let uv3 = vec2((i + 1.) / rings, j / slices);
+                context.gl.geometry(
+                    &[
+                        Vertex::new2(v1 * scale + center, uv1, color),
+                        Vertex::new2(v2 * scale + center, uv2, color),
+                        Vertex::new2(v3 * scale + center, uv3, color),
+                    ],
+                    &[0, 1, 2],
+                );
 
-            context.gl.geometry(
-                &[
-                    Vertex::new2(v1 * scale + center, uv1, color),
-                    Vertex::new2(v2 * scale + center, uv2, color),
-                    Vertex::new2(v3 * scale + center, uv3, color),
-                ],
-                &[0, 1, 2],
-            );
+                let v1 = vec3(
+                    (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).sin(),
+                    (pi34 + (PI / (rings + 1.)) * i).sin(),
+                    (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).cos(),
+                );
+                let uv1 = vec2(i / rings, j / slices);
+                let v2 = vec3(
+                    (pi34 + (PI / (rings + 1.)) * (i)).cos() * ((j + 1.) * pi2 / slices).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i)).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i)).cos() * ((j + 1.) * pi2 / slices).cos(),
+                );
+                let uv2 = vec2(i / rings, (j + 1.) / slices);
+                let v3 = vec3(
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).sin(),
+                    (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).cos(),
+                );
+                let uv3 = vec2((i + 1.) / rings, (j + 1.) / slices);
 
-            let v1 = vec3(
-                (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).sin(),
-                (pi34 + (PI / (rings + 1.)) * i).sin(),
-                (pi34 + (PI / (rings + 1.)) * i).cos() * (j * pi2 / slices).cos(),
-            );
-            let uv1 = vec2(i / rings, j / slices);
-            let v2 = vec3(
-                (pi34 + (PI / (rings + 1.)) * (i)).cos() * ((j + 1.) * pi2 / slices).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i)).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i)).cos() * ((j + 1.) * pi2 / slices).cos(),
-            );
-            let uv2 = vec2(i / rings, (j + 1.) / slices);
-            let v3 = vec3(
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).sin(),
-                (pi34 + (PI / (rings + 1.)) * (i + 1.)).cos() * ((j + 1.) * pi2 / slices).cos(),
-            );
-            let uv3 = vec2((i + 1.) / rings, (j + 1.) / slices);
-
-            context.gl.geometry(
-                &[
-                    Vertex::new2(v1 * scale + center, uv1, color),
-                    Vertex::new2(v2 * scale + center, uv2, color),
-                    Vertex::new2(v3 * scale + center, uv3, color),
-                ],
-                &[0, 1, 2],
-            );
+                context.gl.geometry(
+                    &[
+                        Vertex::new2(v1 * scale + center, uv1, color),
+                        Vertex::new2(v2 * scale + center, uv2, color),
+                        Vertex::new2(v3 * scale + center, uv3, color),
+                    ],
+                    &[0, 1, 2],
+                );
+            }
         }
-    }
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -609,122 +612,122 @@ pub fn draw_cylinder_ex(
     color: Color,
     params: DrawCylinderParams,
 ) {
-    let context = get_context();
+    crate::with_context(|context| {
+        let sides = params.sides;
 
-    let sides = params.sides;
+        context.gl.texture(texture);
+        context.gl.draw_mode(params.draw_mode);
 
-    context.gl.texture(texture);
-    context.gl.draw_mode(params.draw_mode);
+        use std::f32::consts::PI;
+        let angle_step = PI * 2.0 / sides as f32;
+        //draw body
+        for i in 0..sides + 1 {
+            let i = i as f32;
+            //bottom left
+            let v1 = vec3(
+                (i * angle_step).sin() * radius_bottom,
+                0.0,
+                (i * angle_step).cos() * radius_bottom,
+            );
+            //bottom right
+            let v2 = vec3(
+                ((i + 1.0) * angle_step).sin() * radius_bottom,
+                0.0,
+                ((i + 1.0) * angle_step).cos() * radius_bottom,
+            );
+            //top right
+            let v3 = vec3(
+                ((i + 1.0) * angle_step).sin() * radius_top,
+                height,
+                ((i + 1.0) * angle_step).cos() * radius_top,
+            );
 
-    use std::f32::consts::PI;
-    let angle_step = PI * 2.0 / sides as f32;
-    //draw body
-    for i in 0..sides + 1 {
-        let i = i as f32;
-        //bottom left
-        let v1 = vec3(
-            (i * angle_step).sin() * radius_bottom,
-            0.0,
-            (i * angle_step).cos() * radius_bottom,
-        );
-        //bottom right
-        let v2 = vec3(
-            ((i + 1.0) * angle_step).sin() * radius_bottom,
-            0.0,
-            ((i + 1.0) * angle_step).cos() * radius_bottom,
-        );
-        //top right
-        let v3 = vec3(
-            ((i + 1.0) * angle_step).sin() * radius_top,
-            height,
-            ((i + 1.0) * angle_step).cos() * radius_top,
-        );
+            context.gl.geometry(
+                &[
+                    Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
+                    Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
+                    Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
+                ],
+                &[0, 1, 2],
+            );
 
-        context.gl.geometry(
-            &[
-                Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
-                Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
-                Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
-            ],
-            &[0, 1, 2],
-        );
+            //top left
+            let v1 = vec3(
+                (i * angle_step).sin() * radius_top,
+                height,
+                (i * angle_step).cos() * radius_top,
+            );
+            //bottom left
+            let v2 = vec3(
+                (i * angle_step).sin() * radius_bottom,
+                0.0,
+                (i * angle_step).cos() * radius_bottom,
+            );
+            //top right
+            let v3 = vec3(
+                ((i + 1.0) * angle_step).sin() * radius_top,
+                height,
+                ((i + 1.0) * angle_step).cos() * radius_top,
+            );
 
-        //top left
-        let v1 = vec3(
-            (i * angle_step).sin() * radius_top,
-            height,
-            (i * angle_step).cos() * radius_top,
-        );
-        //bottom left
-        let v2 = vec3(
-            (i * angle_step).sin() * radius_bottom,
-            0.0,
-            (i * angle_step).cos() * radius_bottom,
-        );
-        //top right
-        let v3 = vec3(
-            ((i + 1.0) * angle_step).sin() * radius_top,
-            height,
-            ((i + 1.0) * angle_step).cos() * radius_top,
-        );
+            context.gl.geometry(
+                &[
+                    Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
+                    Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
+                    Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
+                ],
+                &[0, 1, 2],
+            );
+        }
 
-        context.gl.geometry(
-            &[
-                Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
-                Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
-                Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
-            ],
-            &[0, 1, 2],
-        );
-    }
+        //draw cap
+        for i in 0..sides + 1 {
+            let i = i as f32;
+            let v1 = vec3(0.0, height, 0.0);
+            let v2 = vec3(
+                (i * angle_step).sin() * radius_top,
+                height,
+                (i * angle_step).cos() * radius_top,
+            );
+            let v3 = vec3(
+                ((i + 1.0) * angle_step).sin() * radius_top,
+                height,
+                ((i + 1.0) * angle_step).cos() * radius_top,
+            );
 
-    //draw cap
-    for i in 0..sides + 1 {
-        let i = i as f32;
-        let v1 = vec3(0.0, height, 0.0);
-        let v2 = vec3(
-            (i * angle_step).sin() * radius_top,
-            height,
-            (i * angle_step).cos() * radius_top,
-        );
-        let v3 = vec3(
-            ((i + 1.0) * angle_step).sin() * radius_top,
-            height,
-            ((i + 1.0) * angle_step).cos() * radius_top,
-        );
+            context.gl.geometry(
+                &[
+                    Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
+                    Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
+                    Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
+                ],
+                &[0, 1, 2],
+            );
+        }
 
-        context.gl.geometry(
-            &[
-                Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
-                Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
-                Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
-            ],
-            &[0, 1, 2],
-        );
-    }
+        //draw base
+        for i in 0..sides + 1 {
+            let i = i as f32;
+            let v1 = vec3(0.0, 0.0, 0.0);
+            let v2 = vec3(
+                (i * angle_step).sin() * radius_bottom,
+                0.0,
+                (i * angle_step).cos() * radius_bottom,
+            );
+            let v3 = vec3(
+                ((i + 1.0) * angle_step).sin() * radius_bottom,
+                0.0,
+                ((i + 1.0) * angle_step).cos() * radius_bottom,
+            );
 
-    //draw base
-    for i in 0..sides + 1 {
-        let i = i as f32;
-        let v1 = vec3(0.0, 0.0, 0.0);
-        let v2 = vec3(
-            (i * angle_step).sin() * radius_bottom,
-            0.0,
-            (i * angle_step).cos() * radius_bottom,
-        );
-        let v3 = vec3(
-            ((i + 1.0) * angle_step).sin() * radius_bottom,
-            0.0,
-            ((i + 1.0) * angle_step).cos() * radius_bottom,
-        );
-
-        context.gl.geometry(
-            &[
-                Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
-                Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
-                Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
-            ],
-            &[0, 1, 2],
-        );
-    }
+            context.gl.geometry(
+                &[
+                    Vertex::new2(v1 + position, vec2(0.0, 0.0), color),
+                    Vertex::new2(v2 + position, vec2(1.0, 0.0), color),
+                    Vertex::new2(v3 + position, vec2(1.0, 1.0), color),
+                ],
+                &[0, 1, 2],
+            );
+        }
+    })
 }

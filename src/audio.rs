@@ -235,6 +235,10 @@ pub(crate) fn init_sound() {
     let owner = Rc::new(AudioOwner::new());
     AUDIO.with(|audio| *audio.borrow_mut() = Some(owner));
 }
+pub(crate) fn shutdown() {
+    let owner = AUDIO.with(|audio| audio.borrow_mut().take());
+    drop(owner);
+}
 fn audio_owner() -> Rc<AudioOwner> {
     AUDIO.with(|audio| {
         audio
@@ -427,6 +431,20 @@ mod tests {
         assert_eq!(events(), vec!["load"]);
         drop(sound);
         assert_eq!(events(), vec!["load", "delete"]);
+    }
+
+    #[test]
+    fn shutdown_releases_tls_owner_but_preserves_live_sound_owner() {
+        setup(LoadState::Ready);
+        let mut future = boxed(load_sound_from_bytes(&[]));
+        let sound = crate::exec::resume(&mut future).unwrap().unwrap();
+        drop(future);
+        shutdown();
+        assert!(AUDIO.with(|slot| slot.borrow().is_none()));
+        assert_eq!(events(), vec!["load"]);
+        stop_sound(&sound);
+        drop(sound);
+        assert_eq!(events(), vec!["load", "stop", "delete"]);
     }
 
     #[test]

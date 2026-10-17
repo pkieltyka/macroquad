@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use crate::{
     color::Color,
-    get_context, get_quad_context,
     math::{vec3, Rect},
     texture::{Image, TextureHandle},
     Error,
@@ -26,7 +25,11 @@ pub(crate) struct CharacterInfo {
     pub sprite: SpriteKey,
 }
 
-/// TTF font loaded to GPU
+/// TTF font and its atlas belong to the originating window thread.
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<macroquad::text::Font>();
+/// ```
 #[derive(Clone)]
 pub struct Font {
     font: Arc<fontdue::Font>,
@@ -45,12 +48,6 @@ pub struct TextDimensions {
     /// "draw_text(.., X, Y, ..)" will be rendered in a "Rect::new(X, Y - dimensions.offset_y, dimensions.width, dimensions.height)"
     /// For reference check "text_measures" example.
     pub offset_y: f32,
-}
-
-#[allow(dead_code)]
-fn require_fn_to_be_send() {
-    fn require_send<T: Send>() {}
-    require_send::<Font>();
 }
 
 impl std::fmt::Debug for Font {
@@ -229,7 +226,6 @@ impl Font {
     }
 
     // pub fn texture(&self) -> Texture2D {
-    //     let font = get_context().fonts_storage.get_font(*self);
 
     //     font.font_texture
     // }
@@ -287,18 +283,18 @@ pub async fn load_ttf_font(path: &str) -> Result<Font, Error> {
 /// let font = load_ttf_font_from_bytes(include_bytes!("font.ttf"));
 /// ```
 pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, Error> {
-    let atlas = Arc::new(Mutex::new(Atlas::new(
-        get_quad_context(),
-        miniquad::FilterMode::Linear,
-    )));
+    let owner = crate::graphics_owner();
+    let atlas =
+        Arc::new(Mutex::new(owner.with(|ctx| {
+            Atlas::new(ctx, owner.clone(), miniquad::FilterMode::Linear)
+        })));
 
     let mut font = Font::load_from_bytes(atlas.clone(), bytes)?;
 
     font.populate_font_cache(&Font::ascii_character_list(), 15);
 
-    let ctx = get_context();
-
-    font.set_filter(ctx.default_filter_mode);
+    let filter = crate::with_context(|ctx| ctx.default_filter_mode);
+    font.set_filter(filter);
 
     Ok(font)
 }
@@ -334,9 +330,8 @@ pub fn draw_text_ex(text: impl AsRef<str>, x: f32, y: f32, params: TextParams) -
         return TextDimensions::default();
     }
 
-    let font = params
-        .font
-        .unwrap_or(&get_context().fonts_storage.default_font);
+    let default_font = get_default_font();
+    let font = params.font.unwrap_or(&default_font);
 
     let dpi_scaling = miniquad::window::dpi_scale();
 
@@ -508,7 +503,8 @@ pub fn measure_text(
     font_size: u16,
     font_scale: f32,
 ) -> TextDimensions {
-    let font = font.unwrap_or_else(|| &get_context().fonts_storage.default_font);
+    let default_font = get_default_font();
+    let font = font.unwrap_or(&default_font);
 
     font.measure_text(text, font_size, font_scale, font_scale, |_| {})
 }
@@ -520,7 +516,8 @@ pub fn measure_multiline_text(
     font_scale: f32,
     line_distance_factor: Option<f32>,
 ) -> TextDimensions {
-    let font = font.unwrap_or_else(|| &get_context().fonts_storage.default_font);
+    let default_font = get_default_font();
+    let font = font.unwrap_or(&default_font);
     let line_distance = match line_distance_factor {
         Some(distance) => distance,
         None => match font.font.horizontal_line_metrics(1.0) {
@@ -553,7 +550,8 @@ pub fn wrap_text(
     font_scale: f32,
     maximum_line_length: f32,
 ) -> String {
-    let font = font.unwrap_or_else(|| &get_context().fonts_storage.default_font);
+    let default_font = get_default_font();
+    let font = font.unwrap_or(&default_font);
 
     // This is always a bit too much memory, but it saves a lot of reallocations.
     let mut new_text =
@@ -620,8 +618,15 @@ pub(crate) struct FontsStorage {
 }
 
 impl FontsStorage {
-    pub(crate) fn new(ctx: &mut dyn miniquad::RenderingBackend) -> FontsStorage {
-        let atlas = Arc::new(Mutex::new(Atlas::new(ctx, miniquad::FilterMode::Linear)));
+    pub(crate) fn new(
+        ctx: &mut dyn miniquad::RenderingBackend,
+        owner: std::rc::Rc<crate::GraphicsOwner>,
+    ) -> FontsStorage {
+        let atlas = Arc::new(Mutex::new(Atlas::new(
+            ctx,
+            owner,
+            miniquad::FilterMode::Linear,
+        )));
 
         let default_font = Font::load_from_bytes(atlas, include_bytes!("ProggyClean.ttf")).unwrap();
         FontsStorage { default_font }
@@ -630,31 +635,33 @@ impl FontsStorage {
 
 /// Returns macroquads default font.
 pub fn get_default_font() -> Font {
-    let context = get_context();
-    context.fonts_storage.default_font.clone()
+    crate::with_context(|context| context.fonts_storage.default_font.clone())
 }
 
 /// Replaces macroquads default font with `font`.
 pub fn set_default_font(font: Font) {
-    let context = get_context();
-    context.fonts_storage.default_font = font;
+    let old = crate::with_context(|context| {
+        std::mem::replace(&mut context.fonts_storage.default_font, font)
+    });
+    drop(old);
 }
 
 /// From given font size in world space gives
 /// (font_size, font_scale and font_aspect) params to make rasterized font
 /// looks good in currently active camera
 pub fn camera_font_scale(world_font_size: f32) -> (u16, f32, f32) {
-    let context = get_context();
-    let (scr_w, scr_h) = miniquad::window::screen_size();
-    let cam_space = context
-        .projection_matrix()
-        .inverse()
-        .transform_vector3(vec3(2., 2., 0.));
-    let (cam_w, cam_h) = (cam_space.x.abs(), cam_space.y.abs());
+    crate::with_context(|context| {
+        let (scr_w, scr_h) = miniquad::window::screen_size();
+        let cam_space = context
+            .projection_matrix()
+            .inverse()
+            .transform_vector3(vec3(2., 2., 0.));
+        let (cam_w, cam_h) = (cam_space.x.abs(), cam_space.y.abs());
 
-    let screen_font_size = world_font_size * scr_h / cam_h;
+        let screen_font_size = world_font_size * scr_h / cam_h;
 
-    let font_size = screen_font_size as u16;
+        let font_size = screen_font_size as u16;
 
-    (font_size, cam_h / scr_h, scr_h / scr_w * cam_w / cam_h)
+        (font_size, cam_h / scr_h, scr_h / scr_w * cam_w / cam_h)
+    })
 }

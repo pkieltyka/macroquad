@@ -231,51 +231,53 @@ pub fn profiler(params: ProfilerParams) {
         );
 
         if state.profiler_window_opened {
-            Window::new(
-                hash!(),
-                vec2(params.fps_counter_pos.x, params.fps_counter_pos.y + 150.0),
-                vec2(525., 450.),
-            )
-            .ui(&mut *root_ui(), |ui| {
-                let tab = ui.tabbar(
+            root_ui(|ui| {
+                Window::new(
                     hash!(),
-                    vec2(300.0, 20.0),
-                    &["profiler", "tasks", "frame", "log"],
-                );
+                    vec2(params.fps_counter_pos.x, params.fps_counter_pos.y + 150.0),
+                    vec2(525., 450.),
+                )
+                .ui(ui, |ui| {
+                    let tab = ui.tabbar(
+                        hash!(),
+                        vec2(300.0, 20.0),
+                        &["profiler", "tasks", "frame", "log"],
+                    );
 
-                match tab {
-                    0 => profiler_window(ui, &mut state),
-                    1 => ui.label(
-                        None,
-                        &format!(
-                            "coroutines allocated memory: {:.1} kb",
-                            (telemetry::coroutines_allocated_memory() as f32) / 1000.0
+                    match tab {
+                        0 => profiler_window(ui, &mut state),
+                        1 => ui.label(
+                            None,
+                            &format!(
+                                "coroutines allocated memory: {:.1} kb",
+                                (telemetry::coroutines_allocated_memory() as f32) / 1000.0
+                            ),
                         ),
-                    ),
-                    2 => {
-                        let drawcalls = telemetry::drawcalls();
-                        ui.label(None, &format!("Draw calls: {}", drawcalls.len()));
-                        for telemetry::DrawCallTelemetry { indices_count, .. } in &drawcalls {
-                            ui.same_line(0.0);
+                        2 => {
+                            let drawcalls = telemetry::drawcalls();
+                            ui.label(None, &format!("Draw calls: {}", drawcalls.len()));
+                            for telemetry::DrawCallTelemetry { indices_count, .. } in &drawcalls {
+                                ui.same_line(0.0);
 
-                            ui.label(None, &format!("{}", indices_count));
-                            ui.same_line(0.0);
+                                ui.label(None, &format!("{}", indices_count));
+                                ui.same_line(0.0);
+                            }
+                            ui.label(None, " ");
+
+                            ui.label(None, " ");
+
+                            if ui.button(None, "Capture frame") {
+                                telemetry::capture_frame();
+                            }
                         }
-                        ui.label(None, " ");
-
-                        ui.label(None, " ");
-
-                        if ui.button(None, "Capture frame") {
-                            telemetry::capture_frame();
+                        3 => {
+                            for label in telemetry::strings() {
+                                ui.label(None, &label);
+                            }
                         }
+                        _ => unreachable!(),
                     }
-                    3 => {
-                        for label in telemetry::strings() {
-                            ui.label(None, &label);
-                        }
-                    }
-                    _ => unreachable!(),
-                }
+                })
             });
         }
         pop_camera_state();

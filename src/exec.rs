@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, Waker};
 
 use crate::Error;
 
@@ -44,25 +44,15 @@ impl Future for FileLoadingFuture {
     }
 }
 
-fn waker() -> Waker {
-    unsafe fn clone(data: *const ()) -> RawWaker {
-        RawWaker::new(data, &VTABLE)
+fn waker() -> &'static Waker {
+    struct FrameWaker;
+    impl std::task::Wake for FrameWaker {
+        fn wake(self: Arc<Self>) {
+            panic!("macroquad does not support waking futures; use coroutines or next_frame");
+        }
     }
-    unsafe fn wake(_data: *const ()) {
-        panic!(
-            "macroquad does not support waking futures, please use coroutines, \
-            otherwise your pending future will block until the next frame"
-        )
-    }
-    unsafe fn wake_by_ref(data: *const ()) {
-        wake(data);
-    }
-    unsafe fn drop(_data: *const ()) {
-        // Nothing to do
-    }
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
-    let raw_waker = RawWaker::new(std::ptr::null(), &VTABLE);
-    unsafe { Waker::from_raw(raw_waker) }
+    static WAKER: std::sync::OnceLock<Waker> = std::sync::OnceLock::new();
+    WAKER.get_or_init(|| Waker::from(Arc::new(FrameWaker)))
 }
 
 /// returns Some(T) if future is done, None if it would block

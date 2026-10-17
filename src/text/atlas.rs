@@ -1,4 +1,4 @@
-use crate::{get_context, get_quad_context, math::Rect, texture::Image, Color};
+use crate::{math::Rect, texture::Image, Color};
 
 use std::collections::HashMap;
 
@@ -9,11 +9,12 @@ pub struct Sprite {
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum SpriteKey {
-    Texture(miniquad::TextureId),
+    Texture(u64),
     Id(u64),
 }
 pub struct Atlas {
     texture: miniquad::TextureId,
+    owner: Option<std::rc::Rc<crate::GraphicsOwner>>,
     image: Image,
     pub sprites: HashMap<SpriteKey, Sprite>,
     cursor_x: u16,
@@ -29,8 +30,9 @@ pub struct Atlas {
 
 impl Drop for Atlas {
     fn drop(&mut self) {
-        let ctx = &mut get_context().quad_context;
-        ctx.delete_texture(self.texture);
+        if let Some(owner) = &self.owner {
+            owner.defer(crate::ResourceDelete::Texture(self.texture));
+        }
     }
 }
 
@@ -40,7 +42,11 @@ impl Atlas {
     // well..
     const UNIQUENESS_OFFSET: u64 = 100000;
 
-    pub fn new(ctx: &mut dyn miniquad::RenderingBackend, filter: miniquad::FilterMode) -> Atlas {
+    pub fn new(
+        ctx: &mut dyn miniquad::RenderingBackend,
+        owner: std::rc::Rc<crate::GraphicsOwner>,
+        filter: miniquad::FilterMode,
+    ) -> Atlas {
         let image = Image::gen_image_color(512, 512, Color::new(0.0, 0.0, 0.0, 0.0));
         let texture = ctx.new_texture_from_rgba8(image.width, image.height, &image.bytes);
         ctx.texture_set_filter(
@@ -50,6 +56,7 @@ impl Atlas {
         );
 
         Atlas {
+            owner: Some(owner),
             image,
             texture,
             cursor_x: 0,
@@ -63,15 +70,19 @@ impl Atlas {
     }
 
     pub fn new_unique_id(&mut self) -> SpriteKey {
-        self.unique_id += 1;
+        self.unique_id = self
+            .unique_id
+            .checked_add(1)
+            .expect("Atlas identifiers exhausted");
 
         SpriteKey::Id(self.unique_id)
     }
 
     pub fn set_filter(&mut self, filter_mode: miniquad::FilterMode) {
-        let ctx = get_quad_context();
         self.filter = filter_mode;
-        ctx.texture_set_filter(self.texture, filter_mode, miniquad::MipmapFilterMode::None);
+        self.owner.as_ref().unwrap().with(|ctx| {
+            ctx.texture_set_filter(self.texture, filter_mode, miniquad::MipmapFilterMode::None)
+        });
     }
 
     pub fn get(&self, key: SpriteKey) -> Option<Sprite> {
@@ -87,31 +98,38 @@ impl Atlas {
     }
 
     pub fn texture(&mut self) -> miniquad::TextureId {
-        let ctx = get_quad_context();
-        if self.dirty {
-            self.dirty = false;
-            let (texture_width, texture_height) = ctx.texture_size(self.texture);
-            if texture_width != self.image.width as _ || texture_height != self.image.height as _ {
-                ctx.delete_texture(self.texture);
+        let owner = self.owner.as_ref().unwrap().clone();
+        owner.with(|ctx| {
+            if self.dirty {
+                self.dirty = false;
+                let (texture_width, texture_height) = ctx.texture_size(self.texture);
+                if texture_width != self.image.width as _
+                    || texture_height != self.image.height as _
+                {
+                    owner.defer(crate::ResourceDelete::Texture(self.texture));
 
-                self.texture = ctx.new_texture_from_rgba8(
-                    self.image.width,
-                    self.image.height,
-                    &self.image.bytes[..],
-                );
-                ctx.texture_set_filter(self.texture, self.filter, miniquad::MipmapFilterMode::None);
+                    self.texture = ctx.new_texture_from_rgba8(
+                        self.image.width,
+                        self.image.height,
+                        &self.image.bytes[..],
+                    );
+                    ctx.texture_set_filter(
+                        self.texture,
+                        self.filter,
+                        miniquad::MipmapFilterMode::None,
+                    );
+                }
+
+                ctx.texture_update(self.texture, &self.image.bytes);
             }
 
-            ctx.texture_update(self.texture, &self.image.bytes);
-        }
-
-        self.texture
+            self.texture
+        })
     }
 
     pub fn get_uv_rect(&self, key: SpriteKey) -> Option<Rect> {
-        let ctx = get_quad_context();
         self.get(key).map(|sprite| {
-            let (w, h) = ctx.texture_size(self.texture);
+            let (w, h) = (self.image.width, self.image.height);
 
             Rect::new(
                 sprite.rect.x / w as f32,
@@ -154,8 +172,16 @@ impl Atlas {
             // note: if we tried to fit gigantic texture into a small atlas,
             // new_width will still be not enough. But its fine, it will
             // be regenerated on the recursion call.
-            let new_width = self.image.width * 2;
-            let new_height = self.image.height * 2;
+            let new_width = self
+                .image
+                .width
+                .checked_mul(2)
+                .expect("Atlas exceeds supported dimensions");
+            let new_height = self
+                .image
+                .height
+                .checked_mul(2)
+                .expect("Atlas exceeds supported dimensions");
 
             self.image =
                 Image::gen_image_color(new_width, new_height, Color::new(0.0, 0.0, 0.0, 0.0));
@@ -218,6 +244,7 @@ mod tests {
         let texture = miniquad::TextureId::from_raw_id(miniquad::RawId::OpenGl(0));
 
         Atlas {
+            owner: None,
             texture,
             image: Image::gen_image_color(width, height, Color::new(0.0, 0.0, 0.0, 0.0)),
             sprites: HashMap::new(),
@@ -260,7 +287,7 @@ mod tests {
             Some(Rect::new(2.0, 14.0, 39.0, 10.0))
         );
 
-        std::mem::forget(atlas);
+        drop(atlas);
     }
 
     // The row-fit predicate must reject the out-of-bounds one-pixel case
@@ -268,8 +295,7 @@ mod tests {
     // edge. Its left-side GAP is already accounted for in `x`.
     #[test]
     fn sprite_ending_at_row_edge_stays_in_current_line() {
-        let mut storage = std::mem::ManuallyDrop::new(atlas(64, 1024));
-        let atlas = &mut *storage;
+        let mut atlas = atlas(64, 1024);
 
         atlas.cache_sprite(SpriteKey::Id(1), sprite(20, 10, WHITE));
         // x = 24 + GAP = 26, and x + width == 64 exactly.
@@ -323,7 +349,7 @@ mod tests {
         assert_eq!(atlas.image.get_pixel(2, 0), green);
         assert_eq!(atlas.image.get_pixel(69, 0), blue);
 
-        std::mem::forget(atlas);
+        drop(atlas);
     }
 
     // Equal-size sprites must not inherit the randomized `HashMap` drain
@@ -377,7 +403,7 @@ mod tests {
         for _ in 0..7 {
             let mut other = atlas(64, 32);
             assert_eq!(first, pack(&mut other));
-            std::mem::forget(other);
+            drop(other);
         }
 
         // and the layout is the exact deterministic packing: two grows to
@@ -399,6 +425,6 @@ mod tests {
         // each key still owns its own pixels after the double repack
         assert_eq!(pixels, [blue, red, green, white]);
 
-        std::mem::forget(first_atlas);
+        drop(first_atlas);
     }
 }

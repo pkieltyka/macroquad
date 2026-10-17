@@ -45,6 +45,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 def check_browser(browser, url, marker="UI material regression passed", check_ui=True, unlock_audio=False, timeout=30):
+    driver_env = os.environ.copy()
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -57,15 +58,17 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
         }}
         command = [os.environ.get("CHROMEDRIVER_BIN", "chromedriver"), f"--port={port}"]
     else:
+        # Set X11 on the driver process so Firefox inherits it even when the
+        # invoking desktop session uses Wayland.
+        driver_env.update({"MOZ_ENABLE_WAYLAND": "0", "GDK_BACKEND": "x11"})
         options = {"browserName": "firefox", "moz:firefoxOptions": {
             "binary": os.environ.get("FIREFOX_BIN") or shutil.which("firefox"),
-            "env": {"MOZ_ENABLE_WAYLAND": "0", "GDK_BACKEND": "x11"},
             "prefs": {"webgl.force-enabled": True, "webgl.disabled": False},
         }}
         command = [os.environ.get("GECKODRIVER_BIN", "geckodriver"), "--port", str(port)]
     session = None
     with (OUTPUT / f"{browser}-driver.log").open("w") as log:
-        driver = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        driver = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=driver_env)
         try:
             deadline = time.monotonic() + 15
             while True:
@@ -83,7 +86,7 @@ def check_browser(browser, url, marker="UI material regression passed", check_ui
             unlocked = False
             while True:
                 result = request(port, "POST", f"/session/{session}/execute/sync", {
-                    "script": "return window.evidence", "args": [],
+                    "script": "return window.evidence && Object.assign({}, window.evidence, {visibility: document.visibilityState})", "args": [],
                 })
                 if unlock_audio and result and result.get("audioInitialized") and not unlocked:
                     request(port, "POST", f"/session/{session}/actions", {"actions": [{

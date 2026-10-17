@@ -1,73 +1,83 @@
 //! Loading and rendering textures. Also render textures, per-pixel image manipulations.
 
-use crate::{
-    color::Color, file::load_file, get_context, get_quad_context, math::Rect,
-    text::atlas::SpriteKey, Error,
-};
+use crate::{color::Color, file::load_file, math::Rect, text::atlas::SpriteKey, Error};
 
 pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
 use glam::{vec2, Vec2};
-use slotmap::{TextureIdSlotMap, TextureSlotId};
-use std::sync::Arc;
+use std::rc::{Rc, Weak};
 
-mod slotmap;
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TextureSlotGuarded(pub TextureSlotId);
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
+pub(crate) struct TextureSlotGuarded {
+    id: miniquad::TextureId,
+    key: u64,
+    owner: Rc<crate::GraphicsOwner>,
+}
+impl PartialEq for TextureSlotGuarded {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && Rc::ptr_eq(&self.owner, &other.owner)
+    }
+}
+#[derive(Debug, Clone)]
 pub(crate) enum TextureHandle {
-    // texture that belongs to macroquad and follows normal garbage collection rules
-    Managed(Arc<TextureSlotGuarded>),
-    ManagedWeak(TextureSlotId),
-    // raw miniquad texture, there are no guarantees that this texture is not yet deleted
+    Managed(Rc<TextureSlotGuarded>),
+    ManagedWeak(
+        Weak<TextureSlotGuarded>,
+        miniquad::TextureId,
+        Weak<crate::GraphicsOwner>,
+    ),
     Unmanaged(miniquad::TextureId),
 }
-
+impl TextureHandle {
+    pub(crate) fn raw(&self) -> miniquad::TextureId {
+        match self {
+            Self::Managed(texture) => {
+                texture.owner.assert_current();
+                texture.id
+            }
+            Self::ManagedWeak(texture, fallback, owner) => {
+                owner
+                    .upgrade()
+                    .expect("Texture owner has shut down")
+                    .assert_current();
+                texture.upgrade().map_or(*fallback, |texture| texture.id)
+            }
+            Self::Unmanaged(id) => *id,
+        }
+    }
+}
+impl PartialEq for TextureHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw() == other.raw()
+    }
+}
 pub(crate) struct TexturesContext {
-    textures: TextureIdSlotMap,
-    removed: Vec<TextureSlotId>,
-    removed_render_passes: Vec<miniquad::RenderPass>,
+    owner: Rc<crate::GraphicsOwner>,
 }
 impl TexturesContext {
-    pub fn new() -> TexturesContext {
-        TexturesContext {
-            textures: TextureIdSlotMap::new(),
-            removed: Vec::with_capacity(200),
-            removed_render_passes: Vec::with_capacity(10),
-        }
+    pub fn new(owner: Rc<crate::GraphicsOwner>) -> Self {
+        Self { owner }
     }
-    fn schedule_removed(&mut self, texture: TextureSlotId) {
-        self.removed.push(texture);
+    fn store_texture(&mut self, id: miniquad::TextureId) -> TextureHandle {
+        self.owner.textures.set(
+            self.owner
+                .textures
+                .get()
+                .checked_add(1)
+                .expect("Texture count overflow"),
+        );
+        let key = self.owner.next_texture_key.get();
+        self.owner
+            .next_texture_key
+            .set(key.checked_add(1).expect("Texture identifiers exhausted"));
+        TextureHandle::Managed(Rc::new(TextureSlotGuarded {
+            id,
+            key,
+            owner: self.owner.clone(),
+        }))
     }
-    fn schedule_render_pass_removed(&mut self, pass: miniquad::RenderPass) {
-        self.removed_render_passes.push(pass);
-    }
-    fn store_texture(&mut self, texture: miniquad::TextureId) -> TextureHandle {
-        TextureHandle::Managed(Arc::new(TextureSlotGuarded(self.textures.insert(texture))))
-    }
-    pub fn texture(&self, texture: TextureSlotId) -> Option<miniquad::TextureId> {
-        self.textures.get(texture)
-    }
-    // fn remove(&mut self, texture: TextureSlotId) {
-    //     self.textures.remove(texture);
-    // }
-    pub const fn len(&self) -> usize {
-        self.textures.len()
-    }
-    pub fn garbage_collect(&mut self, ctx: &mut miniquad::Context) {
-        // Delete RenderPasses first, then textures (safer for attachments/FBOs)
-        for pass in self.removed_render_passes.drain(0..) {
-            ctx.delete_render_pass(pass);
-        }
-
-        for texture in self.removed.drain(0..) {
-            if let Some(texture) = self.textures.get(texture) {
-                ctx.delete_texture(texture);
-            }
-            self.textures.remove(texture);
-        }
+    pub fn len(&self) -> usize {
+        self.owner.textures.get()
     }
 }
 
@@ -433,11 +443,11 @@ pub async fn load_texture(path: &str) -> Result<Texture2D, Error> {
     Ok(Texture2D::from_file_with_format(&bytes[..], None))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RenderPass {
     pub color_texture: Texture2D,
     pub depth_texture: Option<Texture2D>,
-    pub(crate) render_pass: Arc<miniquad::RenderPass>,
+    pub(crate) render_pass: Rc<RenderPassGuard>,
 }
 
 #[derive(Debug, Clone)]
@@ -462,18 +472,25 @@ impl Default for RenderTargetParams {
 impl RenderPass {
     /// Returns the miniquad handle for this render pass.
     pub(crate) fn raw_miniquad_id(&self) -> miniquad::RenderPass {
-        *self.render_pass
+        self.render_pass.owner.assert_current();
+        self.render_pass.id
     }
 }
 
-impl Drop for RenderPass {
+#[derive(Debug)]
+pub(crate) struct RenderPassGuard {
+    pub(crate) id: miniquad::RenderPass,
+    owner: Rc<crate::GraphicsOwner>,
+    _attachments: Vec<Texture2D>,
+}
+impl PartialEq for RenderPassGuard {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && Rc::ptr_eq(&self.owner, &other.owner)
+    }
+}
+impl Drop for RenderPassGuard {
     fn drop(&mut self) {
-        // Safety: if strong_count < 2, this is the last strong ref.
-        // No new strong references can be created after this point.
-        if Arc::strong_count(&self.render_pass) < 2 {
-            let ctx = get_context();
-            ctx.textures.schedule_render_pass_removed(*self.render_pass);
-        }
+        self.owner.defer(crate::ResourceDelete::RenderPass(self.id));
     }
 }
 
@@ -500,64 +517,83 @@ pub fn render_target_msaa(width: u32, height: u32) -> RenderTarget {
     )
 }
 
-pub fn render_target_ex(width: u32, height: u32, params: RenderTargetParams) -> RenderTarget {
+fn validate_samples(samples: i32, resolves: bool) {
+    assert!(samples >= 1, "Invalid sample count");
+    assert!(
+        samples == 1 || resolves,
+        "Multisampled render targets are unsupported by this backend"
+    );
+}
+
+pub(crate) fn validate_target_dimensions(width: u32, height: u32) {
     image_dimensions(width, height).expect("Invalid render target dimensions");
     assert!(width > 0 && height > 0, "Empty render target");
-    assert!(params.sample_count >= 1, "Invalid sample count");
-    let context = get_context();
+}
 
-    let color_texture = get_quad_context().new_render_texture(miniquad::TextureParams {
-        width,
-        height,
-        sample_count: params.sample_count,
-        ..Default::default()
-    });
-    let depth_texture = if params.depth {
-        Some(
-            get_quad_context().new_render_texture(miniquad::TextureParams {
+pub fn render_target_ex(width: u32, height: u32, params: RenderTargetParams) -> RenderTarget {
+    validate_target_dimensions(width, height);
+    assert!(params.sample_count >= 1, "Invalid sample count");
+    crate::with_context(|context| {
+        let owner = context.gpu.clone();
+        owner.with(|backend| {
+            validate_samples(
+                params.sample_count,
+                backend.info().features.resolve_attachments,
+            );
+            let color_id = backend.new_render_texture(miniquad::TextureParams {
                 width,
                 height,
-                format: miniquad::TextureFormat::Depth,
                 sample_count: params.sample_count,
                 ..Default::default()
-            }),
-        )
-    } else {
-        None
-    };
-    let render_pass;
-    let texture;
-    if params.sample_count > 1 {
-        let color_resolve_texture =
-            get_quad_context().new_render_texture(miniquad::TextureParams {
-                width,
-                height,
-                ..Default::default()
             });
-        render_pass = get_quad_context().new_render_pass_mrt(
-            &[color_texture],
-            Some(&[color_resolve_texture]),
-            depth_texture,
-        );
-        texture = color_resolve_texture;
-    } else {
-        render_pass = get_quad_context().new_render_pass_mrt(&[color_texture], None, depth_texture);
-        texture = color_texture;
-    }
-
-    let texture = Texture2D {
-        texture: context.textures.store_texture(texture),
-    };
-
-    let render_pass = RenderPass {
-        color_texture: texture.clone(),
-        depth_texture: None,
-        render_pass: Arc::new(render_pass),
-    };
-    RenderTarget {
-        texture,
-        render_pass,
-    }
+            let color = Texture2D {
+                texture: context.textures.store_texture(color_id),
+            };
+            let depth = params.depth.then(|| Texture2D {
+                texture: context.textures.store_texture(backend.new_render_texture(
+                    miniquad::TextureParams {
+                        width,
+                        height,
+                        format: miniquad::TextureFormat::Depth,
+                        sample_count: params.sample_count,
+                        ..Default::default()
+                    },
+                )),
+            });
+            let resolve = (params.sample_count > 1).then(|| Texture2D {
+                texture: context.textures.store_texture(backend.new_render_texture(
+                    miniquad::TextureParams {
+                        width,
+                        height,
+                        ..Default::default()
+                    },
+                )),
+            });
+            let resolve_id = resolve.as_ref().map(|texture| [texture.raw_miniquad_id()]);
+            let pass = backend.new_render_pass_mrt(
+                &[color_id],
+                resolve_id.as_ref().map(|ids| &ids[..]),
+                depth.as_ref().map(Texture2D::raw_miniquad_id),
+            );
+            let texture = resolve.clone().unwrap_or_else(|| color.clone());
+            let mut attachments = vec![color];
+            attachments.extend(depth.iter().cloned());
+            attachments.extend(resolve);
+            let render_pass = RenderPass {
+                color_texture: texture.clone(),
+                depth_texture: depth,
+                render_pass: Rc::new(RenderPassGuard {
+                    id: pass,
+                    owner: owner.clone(),
+                    _attachments: attachments,
+                }),
+            };
+            RenderTarget {
+                texture,
+                render_pass,
+            }
+        })
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -610,119 +646,126 @@ pub fn draw_texture_ex(
     color: Color,
     params: DrawTextureParams,
 ) {
-    let context = get_context();
+    crate::with_context(|context| {
+        let [mut width, mut height] = texture.size().to_array();
 
-    let [mut width, mut height] = texture.size().to_array();
-
-    let Rect {
-        x: mut sx,
-        y: mut sy,
-        w: mut sw,
-        h: mut sh,
-    } = params.source.unwrap_or(Rect {
-        x: 0.,
-        y: 0.,
-        w: width,
-        h: height,
-    });
-
-    let texture_opt = context
-        .texture_batcher
-        .get(texture)
-        .map(|(batched_texture, uv)| {
-            let [batched_width, batched_height] = batched_texture.size().to_array();
-            sx = ((sx / width) * uv.w + uv.x) * batched_width;
-            sy = ((sy / height) * uv.h + uv.y) * batched_height;
-            sw = (sw / width) * uv.w * batched_width;
-            sh = (sh / height) * uv.h * batched_height;
-
-            width = batched_width;
-            height = batched_height;
-
-            batched_texture
+        let Rect {
+            x: mut sx,
+            y: mut sy,
+            w: mut sw,
+            h: mut sh,
+        } = params.source.unwrap_or(Rect {
+            x: 0.,
+            y: 0.,
+            w: width,
+            h: height,
         });
-    let texture = texture_opt.as_ref().unwrap_or(texture);
 
-    let (mut w, mut h) = match params.dest_size {
-        Some(dst) => (dst.x, dst.y),
-        _ => (sw, sh),
-    };
-    let mut x = x;
-    let mut y = y;
-    if params.flip_x {
-        x += w;
-        w = -w;
-    }
-    if params.flip_y {
-        y += h;
-        h = -h;
-    }
+        let texture_opt = context
+            .texture_batcher
+            .get(texture)
+            .map(|(batched_texture, uv)| {
+                let [batched_width, batched_height] = batched_texture.size().to_array();
+                sx = ((sx / width) * uv.w + uv.x) * batched_width;
+                sy = ((sy / height) * uv.h + uv.y) * batched_height;
+                sw = (sw / width) * uv.w * batched_width;
+                sh = (sh / height) * uv.h * batched_height;
 
-    let pivot = params.pivot.unwrap_or(vec2(x + w / 2., y + h / 2.));
-    let m = pivot;
-    let p = [
-        vec2(x, y) - pivot,
-        vec2(x + w, y) - pivot,
-        vec2(x + w, y + h) - pivot,
-        vec2(x, y + h) - pivot,
-    ];
-    let r = params.rotation;
-    let p = [
-        vec2(
-            p[0].x * r.cos() - p[0].y * r.sin(),
-            p[0].x * r.sin() + p[0].y * r.cos(),
-        ) + m,
-        vec2(
-            p[1].x * r.cos() - p[1].y * r.sin(),
-            p[1].x * r.sin() + p[1].y * r.cos(),
-        ) + m,
-        vec2(
-            p[2].x * r.cos() - p[2].y * r.sin(),
-            p[2].x * r.sin() + p[2].y * r.cos(),
-        ) + m,
-        vec2(
-            p[3].x * r.cos() - p[3].y * r.sin(),
-            p[3].x * r.sin() + p[3].y * r.cos(),
-        ) + m,
-    ];
-    #[rustfmt::skip]
+                width = batched_width;
+                height = batched_height;
+
+                batched_texture
+            });
+        let texture = texture_opt.as_ref().unwrap_or(texture);
+
+        let (mut w, mut h) = match params.dest_size {
+            Some(dst) => (dst.x, dst.y),
+            _ => (sw, sh),
+        };
+        let mut x = x;
+        let mut y = y;
+        if params.flip_x {
+            x += w;
+            w = -w;
+        }
+        if params.flip_y {
+            y += h;
+            h = -h;
+        }
+
+        let pivot = params.pivot.unwrap_or(vec2(x + w / 2., y + h / 2.));
+        let m = pivot;
+        let p = [
+            vec2(x, y) - pivot,
+            vec2(x + w, y) - pivot,
+            vec2(x + w, y + h) - pivot,
+            vec2(x, y + h) - pivot,
+        ];
+        let r = params.rotation;
+        let p = [
+            vec2(
+                p[0].x * r.cos() - p[0].y * r.sin(),
+                p[0].x * r.sin() + p[0].y * r.cos(),
+            ) + m,
+            vec2(
+                p[1].x * r.cos() - p[1].y * r.sin(),
+                p[1].x * r.sin() + p[1].y * r.cos(),
+            ) + m,
+            vec2(
+                p[2].x * r.cos() - p[2].y * r.sin(),
+                p[2].x * r.sin() + p[2].y * r.cos(),
+            ) + m,
+            vec2(
+                p[3].x * r.cos() - p[3].y * r.sin(),
+                p[3].x * r.sin() + p[3].y * r.cos(),
+            ) + m,
+        ];
+        #[rustfmt::skip]
     let vertices = [
         Vertex::new(p[0].x, p[0].y, 0.,  sx      /width,  sy      /height, color),
         Vertex::new(p[1].x, p[1].y, 0., (sx + sw)/width,  sy      /height, color),
         Vertex::new(p[2].x, p[2].y, 0., (sx + sw)/width, (sy + sh)/height, color),
         Vertex::new(p[3].x, p[3].y, 0.,  sx      /width, (sy + sh)/height, color),
     ];
-    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+        let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-    context.gl.texture(Some(texture));
-    context.gl.draw_mode(DrawMode::Triangles);
-    context.gl.geometry(&vertices, &indices);
+        context.gl.texture(Some(texture));
+        context.gl.draw_mode(DrawMode::Triangles);
+        context.gl.geometry(&vertices, &indices);
+    })
 }
 
 /// Get pixel data from screen buffer and return an Image (screenshot)
 pub fn get_screen_data() -> Image {
-    get_context().perform_render_passes();
+    crate::with_context(|context| context.perform_render_passes());
 
-    let context = get_context();
-    image_dimensions(context.screen_width as u32, context.screen_height as u32)
-        .expect("Invalid screenshot dimensions");
+    crate::with_context(|context| {
+        image_dimensions(context.screen_width as u32, context.screen_height as u32)
+            .expect("Invalid screenshot dimensions");
 
-    let texture_id = get_quad_context().new_render_texture(miniquad::TextureParams {
-        width: context.screen_width as _,
-        height: context.screen_height as _,
-        ..Default::default()
-    });
+        let texture_id = crate::with_backend(|backend| {
+            backend.new_render_texture(miniquad::TextureParams {
+                width: context.screen_width as _,
+                height: context.screen_height as _,
+                ..Default::default()
+            })
+        });
 
-    let texture = Texture2D {
-        texture: context.textures.store_texture(texture_id),
-    };
+        let texture = Texture2D {
+            texture: context.textures.store_texture(texture_id),
+        };
 
-    texture.grab_screen();
+        texture.grab_screen();
 
-    texture.get_texture_data()
+        texture.get_texture_data()
+    })
 }
 
-/// Texture, data stored in GPU memory
+/// Texture, data stored in GPU memory on its originating window thread.
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<macroquad::texture::Texture2D>();
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct Texture2D {
     pub(crate) texture: TextureHandle,
@@ -730,20 +773,30 @@ pub struct Texture2D {
 
 impl Drop for TextureSlotGuarded {
     fn drop(&mut self) {
-        let ctx = get_context();
-        ctx.textures.schedule_removed(self.0);
+        self.owner.defer(crate::ResourceDelete::Texture(self.id));
+        self.owner.textures.set(self.owner.textures.get() - 1);
     }
 }
 
 impl Texture2D {
-    pub fn weak_clone(&self) -> Texture2D {
+    fn sprite_key(&self) -> Option<SpriteKey> {
         match &self.texture {
-            TextureHandle::Unmanaged(id) => Texture2D::unmanaged(*id),
-            TextureHandle::Managed(t) => Texture2D {
-                texture: TextureHandle::ManagedWeak(t.0),
-            },
-            TextureHandle::ManagedWeak(t) => Texture2D {
-                texture: TextureHandle::ManagedWeak(*t),
+            TextureHandle::Managed(texture) => Some(SpriteKey::Texture(texture.key)),
+            TextureHandle::ManagedWeak(texture, ..) => texture
+                .upgrade()
+                .map(|texture| SpriteKey::Texture(texture.key)),
+            TextureHandle::Unmanaged(_) => None,
+        }
+    }
+    pub fn weak_clone(&self) -> Texture2D {
+        Texture2D {
+            texture: match &self.texture {
+                TextureHandle::Managed(texture) => TextureHandle::ManagedWeak(
+                    Rc::downgrade(texture),
+                    texture.owner.white.get().unwrap(),
+                    Rc::downgrade(&texture.owner),
+                ),
+                other => other.clone(),
             },
         }
     }
@@ -763,9 +816,7 @@ impl Texture2D {
     /// # }
     /// ```
     pub fn empty() -> Texture2D {
-        let ctx = get_context();
-
-        Texture2D::unmanaged(ctx.gl.white_texture)
+        crate::with_context(|ctx| Texture2D::unmanaged(ctx.gl.white_texture))
     }
 
     /// Creates a Texture2D from a slice of bytes that contains an encoded image.
@@ -820,49 +871,51 @@ impl Texture2D {
     /// ```
     pub fn from_rgba8(width: u16, height: u16, bytes: &[u8]) -> Texture2D {
         validate_rgba(width as u32, height as u32, bytes);
-        let texture = get_quad_context().new_texture_from_rgba8(width, height, bytes);
-        let ctx = get_context();
-        let texture = ctx.textures.store_texture(texture);
-        let texture = Texture2D { texture };
-        texture.set_filter(ctx.default_filter_mode);
-
-        ctx.texture_batcher.add_unbatched(&texture);
-
-        texture
+        let texture =
+            crate::with_backend(|backend| backend.new_texture_from_rgba8(width, height, bytes));
+        crate::with_context(|ctx| {
+            let texture = ctx.textures.store_texture(texture);
+            let texture = Texture2D { texture };
+            texture.set_filter(ctx.default_filter_mode);
+            ctx.texture_batcher.add_unbatched(&texture);
+            texture
+        })
     }
 
     /// Uploads [Image] data to this texture.
     pub fn update(&self, image: &Image) {
         validate_rgba(image.width as u32, image.height as u32, &image.bytes);
-        let ctx = get_quad_context();
-        assert_eq!(
-            ctx.texture_params(self.raw_miniquad_id()).format,
-            miniquad::TextureFormat::RGBA8,
-            "Only RGBA8 updates are supported"
-        );
-        let (width, height) = ctx.texture_size(self.raw_miniquad_id());
+        crate::with_backend(|ctx| {
+            assert_eq!(
+                ctx.texture_params(self.raw_miniquad_id()).format,
+                miniquad::TextureFormat::RGBA8,
+                "Only RGBA8 updates are supported"
+            );
+            let (width, height) = ctx.texture_size(self.raw_miniquad_id());
 
-        assert_eq!(width, image.width as u32);
-        assert_eq!(height, image.height as u32);
+            assert_eq!(width, image.width as u32);
+            assert_eq!(height, image.height as u32);
 
-        ctx.texture_update(self.raw_miniquad_id(), &image.bytes);
+            ctx.texture_update(self.raw_miniquad_id(), &image.bytes);
+        })
     }
 
     // Updates the texture from an array of bytes.
     pub fn update_from_bytes(&self, width: u32, height: u32, bytes: &[u8]) {
         validate_rgba(width, height, bytes);
-        let ctx = get_quad_context();
-        assert_eq!(
-            ctx.texture_params(self.raw_miniquad_id()).format,
-            miniquad::TextureFormat::RGBA8,
-            "Only RGBA8 updates are supported"
-        );
-        let (texture_width, texture_height) = ctx.texture_size(self.raw_miniquad_id());
+        crate::with_backend(|ctx| {
+            assert_eq!(
+                ctx.texture_params(self.raw_miniquad_id()).format,
+                miniquad::TextureFormat::RGBA8,
+                "Only RGBA8 updates are supported"
+            );
+            let (texture_width, texture_height) = ctx.texture_size(self.raw_miniquad_id());
 
-        assert_eq!(texture_width, width);
-        assert_eq!(texture_height, height);
+            assert_eq!(texture_width, width);
+            assert_eq!(texture_height, height);
 
-        ctx.texture_update(self.raw_miniquad_id(), bytes);
+            ctx.texture_update(self.raw_miniquad_id(), bytes);
+        })
     }
 
     /// Uploads [Image] data to part of this texture.
@@ -874,54 +927,57 @@ impl Texture2D {
         width: i32,
         height: i32,
     ) {
-        let ctx = get_quad_context();
-
-        let params = ctx.texture_params(self.raw_miniquad_id());
-        assert_eq!(
-            params.format,
-            miniquad::TextureFormat::RGBA8,
-            "Only RGBA8 updates are supported"
-        );
-        validate_region(
-            params.width,
-            params.height,
-            x_offset,
-            y_offset,
-            width,
-            height,
-            &image.bytes,
-        );
-        ctx.texture_update_part(
-            self.raw_miniquad_id(),
-            x_offset,
-            y_offset,
-            width,
-            height,
-            &image.bytes,
-        );
+        crate::with_backend(|ctx| {
+            let params = ctx.texture_params(self.raw_miniquad_id());
+            assert_eq!(
+                params.format,
+                miniquad::TextureFormat::RGBA8,
+                "Only RGBA8 updates are supported"
+            );
+            validate_region(
+                params.width,
+                params.height,
+                x_offset,
+                y_offset,
+                width,
+                height,
+                &image.bytes,
+            );
+            ctx.texture_update_part(
+                self.raw_miniquad_id(),
+                x_offset,
+                y_offset,
+                width,
+                height,
+                &image.bytes,
+            );
+        })
     }
 
     /// Returns the width of this texture.
     pub fn width(&self) -> f32 {
-        let ctx = get_quad_context();
-        let (width, _) = ctx.texture_size(self.raw_miniquad_id());
+        crate::with_backend(|ctx| {
+            let (width, _) = ctx.texture_size(self.raw_miniquad_id());
 
-        width as f32
+            width as f32
+        })
     }
 
     /// Returns the height of this texture.
     pub fn height(&self) -> f32 {
-        let ctx = get_quad_context();
-        let (_, height) = ctx.texture_size(self.raw_miniquad_id());
+        crate::with_backend(|ctx| {
+            let (_, height) = ctx.texture_size(self.raw_miniquad_id());
 
-        height as f32
+            height as f32
+        })
     }
 
     pub fn size(&self) -> Vec2 {
-        let ctx = get_quad_context();
-        let (width, height) = ctx.texture_size(self.raw_miniquad_id());
+        crate::with_backend(|ctx| {
+            let (width, height) = ctx.texture_size(self.raw_miniquad_id());
 
-        vec2(width as f32, height as f32)
+            vec2(width as f32, height as f32)
+        })
     }
 
     /// Sets the [FilterMode] of this texture.
@@ -938,80 +994,98 @@ impl Texture2D {
     /// # }
     /// ```
     pub fn set_filter(&self, filter_mode: FilterMode) {
-        let ctx = get_quad_context();
-
-        ctx.texture_set_filter(
-            self.raw_miniquad_id(),
-            filter_mode,
-            miniquad::MipmapFilterMode::None,
-        );
+        crate::with_backend(|ctx| {
+            ctx.texture_set_filter(
+                self.raw_miniquad_id(),
+                filter_mode,
+                miniquad::MipmapFilterMode::None,
+            );
+        })
     }
 
     /// Returns the handle for this texture.
     pub(crate) fn raw_miniquad_id(&self) -> miniquad::TextureId {
-        let ctx = get_context();
-
-        ctx.raw_miniquad_id(&self.texture)
+        self.texture.raw()
     }
 
     /// Updates this texture from the screen.
     #[allow(unreachable_patterns)]
     pub fn grab_screen(&self) {
-        use miniquad::*;
-        let texture = self.raw_miniquad_id();
-        let ctx = get_quad_context();
-        let params = ctx.texture_params(texture);
-        let raw_id = match unsafe { ctx.texture_raw_id(texture) } {
-            miniquad::RawId::OpenGl(id) => id,
-            _ => unimplemented!(),
-        };
-        let internal_format = match params.format {
-            TextureFormat::RGB8 => miniquad::gl::GL_RGB,
-            TextureFormat::RGBA8 => miniquad::gl::GL_RGBA,
-            TextureFormat::RGBA16F => miniquad::gl::GL_RGBA,
-            TextureFormat::Depth => miniquad::gl::GL_DEPTH_COMPONENT,
-            TextureFormat::Depth32 => miniquad::gl::GL_DEPTH_COMPONENT,
-            #[cfg(target_arch = "wasm32")]
-            TextureFormat::Alpha => miniquad::gl::GL_ALPHA,
-            #[cfg(not(target_arch = "wasm32"))]
-            TextureFormat::Alpha => miniquad::gl::GL_R8,
-        };
-        unsafe {
-            gl::glBindTexture(gl::GL_TEXTURE_2D, raw_id);
-            gl::glCopyTexImage2D(
-                gl::GL_TEXTURE_2D,
-                0,
-                internal_format,
-                0,
-                0,
-                params.width as _,
-                params.height as _,
-                0,
-            );
-        }
+        let id = self.raw_miniquad_id();
+        crate::with_backend(|backend| copy_screen_to_texture(backend, id));
     }
 
     /// Returns an [Image] from the pixel data in this texture.
     ///
     /// This operation can be expensive.
     pub fn get_texture_data(&self) -> Image {
-        let ctx = get_quad_context();
-        let id = self.raw_miniquad_id();
-        let params = ctx.texture_params(id);
-        assert_eq!(
-            params.format,
-            miniquad::TextureFormat::RGBA8,
-            "Only RGBA8 readback is supported"
+        crate::with_backend(|ctx| {
+            let id = self.raw_miniquad_id();
+            let params = ctx.texture_params(id);
+            assert_eq!(
+                params.format,
+                miniquad::TextureFormat::RGBA8,
+                "Only RGBA8 readback is supported"
+            );
+            assert_eq!(
+                params.sample_count, 1,
+                "Multisampled readback is unsupported"
+            );
+            let (width, height, length) = image_dimensions(params.width, params.height)
+                .expect("Invalid texture readback dimensions");
+            let mut image = Image::from_rgba8(width, height, vec![0; length]).unwrap();
+            ctx.texture_read_pixels(id, &mut image.bytes);
+            image
+        })
+    }
+}
+
+pub(crate) fn copy_screen_to_texture(
+    ctx: &mut dyn miniquad::RenderingBackend,
+    texture: miniquad::TextureId,
+) {
+    use miniquad::*;
+    assert_eq!(
+        ctx.info().backend,
+        miniquad::Backend::OpenGl,
+        "Screen copy requires OpenGL"
+    );
+    let params = ctx.texture_params(texture);
+    assert_eq!(params.format, miniquad::TextureFormat::RGBA8);
+    assert_eq!(params.sample_count, 1);
+    let raw_id = match unsafe { ctx.texture_raw_id(texture) } {
+        miniquad::RawId::OpenGl(id) => id,
+        _ => unimplemented!(),
+    };
+    let internal_format = match params.format {
+        TextureFormat::RGB8 => miniquad::gl::GL_RGB,
+        TextureFormat::RGBA8 => miniquad::gl::GL_RGBA,
+        TextureFormat::RGBA16F => miniquad::gl::GL_RGBA,
+        TextureFormat::Depth => miniquad::gl::GL_DEPTH_COMPONENT,
+        TextureFormat::Depth32 => miniquad::gl::GL_DEPTH_COMPONENT,
+        #[cfg(target_arch = "wasm32")]
+        TextureFormat::Alpha => miniquad::gl::GL_ALPHA,
+        #[cfg(not(target_arch = "wasm32"))]
+        TextureFormat::Alpha => miniquad::gl::GL_R8,
+    };
+    // SAFETY: the backend owns this live RGBA8 texture, and the graphics
+    // scope confines GL access to the initialized window thread. Restore
+    // the real binding so Miniquad's cached binding remains accurate.
+    unsafe {
+        let mut previous = 0;
+        gl::glGetIntegerv(0x8069 /* GL_TEXTURE_BINDING_2D */, &mut previous);
+        gl::glBindTexture(gl::GL_TEXTURE_2D, raw_id);
+        gl::glCopyTexImage2D(
+            gl::GL_TEXTURE_2D,
+            0,
+            internal_format,
+            0,
+            0,
+            params.width as _,
+            params.height as _,
+            0,
         );
-        assert_eq!(
-            params.sample_count, 1,
-            "Multisampled readback is unsupported"
-        );
-        let (width, height, length) = image_dimensions(params.width, params.height)
-            .expect("Invalid texture readback dimensions");
-        let mut image = Image::from_rgba8(width, height, vec![0; length]).unwrap();
-        ctx.texture_read_pixels(id, &mut image.bytes);
-        image
+        gl::glBindTexture(gl::GL_TEXTURE_2D, previous as u32);
     }
 }
 
@@ -1021,10 +1095,13 @@ pub(crate) struct Batcher {
 }
 
 impl Batcher {
-    pub fn new(ctx: &mut dyn miniquad::RenderingBackend) -> Batcher {
+    pub fn new(
+        ctx: &mut dyn miniquad::RenderingBackend,
+        owner: Rc<crate::GraphicsOwner>,
+    ) -> Batcher {
         Batcher {
             unbatched: vec![],
-            atlas: crate::text::atlas::Atlas::new(ctx, miniquad::FilterMode::Linear),
+            atlas: crate::text::atlas::Atlas::new(ctx, owner, miniquad::FilterMode::Linear),
         }
     }
 
@@ -1033,7 +1110,7 @@ impl Batcher {
     }
 
     pub fn get(&mut self, texture: &Texture2D) -> Option<(Texture2D, Rect)> {
-        let id = SpriteKey::Texture(texture.raw_miniquad_id());
+        let id = texture.sprite_key()?;
         let uv_rect = self.atlas.get_uv_rect(id)?;
         Some((Texture2D::unmanaged(self.atlas.texture()), uv_rect))
     }
@@ -1045,40 +1122,41 @@ impl Batcher {
 /// NOTE: the GPU memory and texture itself in Texture2D will still be allocated
 /// and Texture->Image conversions will work with Texture2D content, not the atlas
 pub fn build_textures_atlas() {
-    let context = get_context();
+    crate::with_context(|context| {
+        for texture in context.texture_batcher.unbatched.drain(0..) {
+            let Some(id) = texture.sprite_key() else {
+                continue;
+            };
+            let sprite: Image = texture.get_texture_data();
 
-    for texture in context.texture_batcher.unbatched.drain(0..) {
-        let sprite: Image = texture.get_texture_data();
-        let id = SpriteKey::Texture(texture.raw_miniquad_id());
+            context.texture_batcher.atlas.cache_sprite(id, sprite);
+        }
 
-        context.texture_batcher.atlas.cache_sprite(id, sprite);
-    }
-
-    let texture = context.texture_batcher.atlas.texture();
-    let (w, h) = get_quad_context().texture_size(texture);
-    crate::telemetry::log_string(&format!("Atlas: {w} {h}"));
-}
-
-#[doc(hidden)]
-/// Macroquad do not have track of all loaded fonts.
-/// Fonts store their characters as ID's in the atlas.
-/// There fore resetting the atlas will render all fonts unusable.
-pub unsafe fn reset_textures_atlas() {
-    let context = get_context();
-    context.fonts_storage = crate::text::FontsStorage::new(&mut *context.quad_context);
-    context.texture_batcher = Batcher::new(&mut *context.quad_context);
+        let texture = context.texture_batcher.atlas.texture();
+        let (w, h) = crate::with_backend(|backend| backend.texture_size(texture));
+        crate::telemetry::log_string(&format!("Atlas: {w} {h}"));
+    })
 }
 
 pub fn set_default_filter_mode(filter: FilterMode) {
-    let context = get_context();
-
-    context.default_filter_mode = filter;
-    context.texture_batcher.atlas.set_filter(filter);
+    crate::with_context(|context| {
+        context.default_filter_mode = filter;
+        context.texture_batcher.atlas.set_filter(filter);
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_multisampling_is_rejected_before_backend_allocation() {
+        validate_samples(1, false);
+        validate_samples(4, true);
+        for (samples, supported) in [(0, true), (-1, true), (4, false)] {
+            assert!(std::panic::catch_unwind(|| validate_samples(samples, supported)).is_err());
+        }
+    }
 
     #[test]
     fn image_constructor_rejects_short_and_long_storage() {
@@ -1191,5 +1269,99 @@ mod tests {
             bytes: vec![],
         };
         let _ = image.get_image_data();
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    use std::cell::RefCell;
+    fn owner() -> (
+        Rc<crate::GraphicsOwner>,
+        Rc<RefCell<Vec<miniquad::TextureId>>>,
+    ) {
+        let deleted = Rc::new(RefCell::new(vec![]));
+        let owner = crate::GraphicsOwner::new(Box::new(crate::test_backend::Recorder {
+            deleted: deleted.clone(),
+        }));
+        owner.white.set(Some(id(0)));
+        (owner, deleted)
+    }
+    fn id(value: u32) -> miniquad::TextureId {
+        miniquad::TextureId::from_raw_id(miniquad::RawId::OpenGl(value))
+    }
+    struct Installed(Option<Rc<crate::GraphicsOwner>>);
+    impl Installed {
+        fn new(owner: Rc<crate::GraphicsOwner>) -> Self {
+            Self(crate::GRAPHICS.with(|slot| slot.borrow_mut().replace(owner)))
+        }
+    }
+    impl Drop for Installed {
+        fn drop(&mut self) {
+            crate::GRAPHICS.with(|slot| *slot.borrow_mut() = self.0.take());
+        }
+    }
+
+    #[test]
+    fn final_texture_drop_defers_without_reentering_backend() {
+        let (owner, deleted) = owner();
+        let mut textures = TexturesContext::new(owner.clone());
+        let texture = Texture2D {
+            texture: textures.store_texture(id(7)),
+        };
+        let clone = texture.clone();
+        owner.with(|_| {
+            drop(texture);
+            assert_eq!(textures.len(), 1);
+            drop(clone);
+        });
+        assert_eq!(textures.len(), 0);
+        assert!(deleted.borrow().is_empty());
+        let pending = owner.pending.take();
+        assert_eq!(pending.len(), 1);
+        owner.with(|backend| {
+            for resource in pending {
+                if let crate::ResourceDelete::Texture(texture) = resource {
+                    backend.delete_texture(texture);
+                } else {
+                    panic!("Unexpected cleanup");
+                }
+            }
+        });
+        assert_eq!(*deleted.borrow(), [id(7)]);
+    }
+    #[test]
+    fn weak_handles_expire_and_cannot_address_other_owners() {
+        let (first, _) = owner();
+        let _installed = Installed::new(first.clone());
+        let mut textures = TexturesContext::new(first.clone());
+        let texture = Texture2D {
+            texture: textures.store_texture(id(7)),
+        };
+        let weak = texture.weak_clone();
+        assert_eq!(weak.raw_miniquad_id(), id(7));
+        drop(texture);
+        assert_eq!(weak.raw_miniquad_id(), id(0));
+        let (second, _) = owner();
+        let _different = Installed::new(second);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| weak.raw_miniquad_id()))
+                .is_err()
+        );
+    }
+    #[test]
+    fn late_drop_keeps_origin_alive_without_gpu_access_after_shutdown() {
+        let (owner, deleted) = owner();
+        let weak = Rc::downgrade(&owner);
+        let mut textures = TexturesContext::new(owner.clone());
+        let texture = Texture2D {
+            texture: textures.store_texture(id(7)),
+        };
+        owner.active.set(false);
+        drop((owner, textures));
+        assert!(weak.upgrade().is_some());
+        drop(texture);
+        assert!(weak.upgrade().is_none());
+        assert!(deleted.borrow().is_empty());
     }
 }

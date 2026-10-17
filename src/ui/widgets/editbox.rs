@@ -1,5 +1,3 @@
-#[cfg(target_os = "android")]
-use crate::get_quad_context;
 use crate::{
     math::{vec2, Rect, Vec2},
     ui::{ElementState, Id, InputCharacter, Key, KeyCode, Layout, Ui},

@@ -1,23 +1,31 @@
 //! Custom materials - shaders, uniforms.
 
 pub use crate::tobytes::ToBytes;
-use crate::{get_context, quad_gl::GlPipeline, texture::Texture2D, Error};
+use crate::{quad_gl::GlPipeline, texture::Texture2D, Error};
 use miniquad::{PipelineParams, UniformDesc};
-use std::sync::Arc;
+use std::rc::Rc;
 
-#[derive(PartialEq)]
-struct GlPipelineGuarded(GlPipeline);
+struct GlPipelineGuarded(GlPipeline, Rc<crate::GraphicsOwner>);
 
+impl PartialEq for GlPipelineGuarded {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && Rc::ptr_eq(&self.1, &other.1)
+    }
+}
 impl Drop for GlPipelineGuarded {
     fn drop(&mut self) {
-        get_context().gl.delete_pipeline(self.0);
+        self.1.defer(crate::ResourceDelete::Pipeline(self.0));
     }
 }
 
-/// Material instance loaded on GPU.
+/// Material instance loaded on GPU on its originating window thread.
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<macroquad::material::Material>();
+/// ```
 #[derive(Clone, PartialEq)]
 pub struct Material {
-    pipeline: Arc<GlPipelineGuarded>,
+    pipeline: Rc<GlPipelineGuarded>,
 }
 
 impl std::fmt::Debug for Material {
@@ -27,6 +35,9 @@ impl std::fmt::Debug for Material {
 }
 
 impl Material {
+    pub(crate) fn pipeline(&self) -> GlPipeline {
+        self.pipeline.0
+    }
     /// Set GPU uniform value for this material.
     /// "name" should be from "uniforms" list used for material creation.
     /// Otherwise uniform value would be silently ignored.
@@ -53,17 +64,28 @@ impl Material {
     /// }
     /// ```
     pub fn set_uniform<T: ToBytes>(&self, name: &str, uniform: T) {
-        get_context().gl.set_uniform(self.pipeline.0, name, uniform);
+        self.pipeline.1.assert_current();
+        let bytes = uniform.to_bytes().to_vec();
+        crate::with_context(|context| {
+            context
+                .gl
+                .set_uniform_bytes(self.pipeline.0, name, &bytes, true)
+        });
     }
 
     pub fn set_uniform_array<T: ToBytes>(&self, name: &str, uniform: &[T]) {
-        get_context()
-            .gl
-            .set_uniform_array(self.pipeline.0, name, uniform);
+        self.pipeline.1.assert_current();
+        let bytes = uniform.to_bytes().to_vec();
+        crate::with_context(|context| {
+            context
+                .gl
+                .set_uniform_bytes(self.pipeline.0, name, &bytes, false)
+        });
     }
 
     pub fn set_texture(&self, name: &str, texture: Texture2D) {
-        get_context().gl.set_texture(self.pipeline.0, name, texture);
+        self.pipeline.1.assert_current();
+        crate::with_context(|context| context.gl.set_texture(self.pipeline.0, name, texture));
     }
 }
 
@@ -146,29 +168,40 @@ pub fn load_material(
     shader: crate::ShaderSource,
     params: MaterialParams,
 ) -> Result<Material, Error> {
-    let context = &mut get_context();
+    crate::with_context(|context| {
+        let owner = context.gpu.clone();
+        let pipeline = owner.with(|backend| {
+            context.gl.make_pipeline(
+                backend,
+                shader,
+                params.pipeline_params,
+                params.uniforms,
+                params.textures,
+            )
+        })?;
 
-    let pipeline = context.gl.make_pipeline(
-        &mut *context.quad_context,
-        shader,
-        params.pipeline_params,
-        params.uniforms,
-        params.textures,
-    )?;
-
-    Ok(Material {
-        pipeline: Arc::new(GlPipelineGuarded(pipeline)),
+        Ok(Material {
+            pipeline: Rc::new(GlPipelineGuarded(pipeline, context.gpu.clone())),
+        })
     })
 }
 
 /// All following macroquad rendering calls will use the given material.
 pub fn gl_use_material(material: &Material) {
-    get_context().gl.pipeline(Some(material.pipeline.0));
+    material.pipeline.1.assert_current();
+    crate::with_context(|context| {
+        context.gl.pipeline(Some(material.pipeline.0));
+        context.retained_materials.push(material.clone());
+        context.active_material = Some(material.clone());
+    });
 }
 
 /// Use default macroquad material.
 pub fn gl_use_default_material() {
-    get_context().gl.pipeline(None);
+    crate::with_context(|context| {
+        context.gl.pipeline(None);
+        context.active_material = None;
+    });
 }
 
 #[doc(hidden)]

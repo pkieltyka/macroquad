@@ -1,7 +1,5 @@
 //! Window and associated to window rendering context related functions.
 
-use crate::{get_context, get_quad_context};
-
 use crate::color::Color;
 
 pub use crate::miniquad;
@@ -19,36 +17,35 @@ pub fn next_frame() -> crate::exec::FrameFuture {
 /// Note: even when "clear_background" is not called explicitly,
 /// the screen will be cleared at the beginning of the frame.
 pub fn clear_background(color: Color) {
-    let context = get_context();
-
-    context.gl.clear(get_quad_context(), color);
+    crate::with_context(|context| context.gpu.with(|backend| context.gl.clear(backend, color)));
 }
 
 #[doc(hidden)]
 pub fn gl_set_drawcall_buffer_capacity(max_vertices: usize, max_indices: usize) {
-    let context = get_context();
-    context
-        .gl
-        .update_drawcall_capacity(get_quad_context(), max_vertices, max_indices);
+    crate::with_context(|context| {
+        context.gpu.with(|backend| {
+            context
+                .gl
+                .update_drawcall_capacity(backend, max_vertices, max_indices)
+        })
+    });
 }
 
 /// Returns the selected renderer without exposing its raw backend.
 pub fn rendering_backend() -> miniquad::Backend {
-    get_quad_context().info().backend
+    crate::with_backend(|backend| backend.info().backend)
 }
 
 pub fn screen_width() -> f32 {
-    let context = get_context();
-    context.screen_width / miniquad::window::dpi_scale()
+    crate::with_context(|context| context.screen_width / miniquad::window::dpi_scale())
 }
 
 pub fn screen_height() -> f32 {
-    let context = get_context();
-
-    context.screen_height / miniquad::window::dpi_scale()
+    crate::with_context(|context| context.screen_height / miniquad::window::dpi_scale())
 }
 
 pub fn screen_dpi_scale() -> f32 {
+    crate::thread_assert::same_thread();
     miniquad::window::dpi_scale()
 }
 
@@ -56,6 +53,7 @@ pub fn screen_dpi_scale() -> f32 {
 ///
 /// Note that the OS might decide to give a different size. Additionally, the size in macroquad won't be updated until the next `next_frame().await`.
 pub fn request_new_screen_size(width: f32, height: f32) {
+    crate::thread_assert::same_thread();
     miniquad::window::set_window_size(
         (width * miniquad::window::dpi_scale()) as u32,
         (height * miniquad::window::dpi_scale()) as u32,
@@ -67,6 +65,7 @@ pub fn request_new_screen_size(width: f32, height: f32) {
 
 /// Toggle whether the window is fullscreen.
 pub fn set_fullscreen(fullscreen: bool) {
+    crate::thread_assert::same_thread();
     miniquad::window::set_fullscreen(fullscreen);
 }
 
@@ -82,9 +81,9 @@ pub fn set_fullscreen(fullscreen: bool) {
 /// set_panic_handler(|msg, backtrace| async move {
 ///     loop {
 ///         clear_background(RED);
-///         ui::root_ui().label(None, &msg);
+///         ui::root_ui(|ui| ui.label(None, &msg));
 ///         for line in backtrace.split('\n') {
-///             root_ui().label(None, line);
+///             ui::root_ui(|ui| ui.label(None, line));
 ///         }
 ///         next_frame().await;
 ///      }
@@ -106,6 +105,14 @@ where
     T: std::future::Future<Output = ()> + 'static,
     F: Fn(String, String) -> T + Send + Sync + 'static,
 {
+    let factory: std::rc::Rc<
+        dyn Fn(String, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
+    > = std::rc::Rc::new(move |message, backtrace| Box::pin(future(message, backtrace)));
+    let old = crate::with_context(|context| {
+        context.unwind = true;
+        context.recovery_factory.replace(factory)
+    });
+    drop(old);
     std::panic::set_hook(Box::new(move |info| {
         let message = format!("{info:?}");
         #[cfg(feature = "backtrace")]
@@ -115,8 +122,15 @@ where
         crate::logging::error!("{}", message);
         crate::logging::error!("{}", backtrace_string);
 
-        crate::get_context().recovery_future = Some(Box::pin(future(message, backtrace_string)));
+        let _ = PANIC_MESSAGE.try_with(|pending| {
+            if let Ok(mut pending) = pending.try_borrow_mut() {
+                *pending = Some((message, backtrace_string));
+            }
+        });
     }));
+}
 
-    crate::get_context().unwind = true;
+thread_local! { static PANIC_MESSAGE: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) }; }
+pub(crate) fn take_panic_message() -> Option<(String, String)> {
+    PANIC_MESSAGE.with(|pending| pending.borrow_mut().take())
 }

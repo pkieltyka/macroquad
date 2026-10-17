@@ -152,109 +152,115 @@ async fn main() {
     loop {
         clear_background(WHITE);
 
-        widgets::Window::new(hash!(), vec2(400., 200.), vec2(320., 400.))
-            .label("Shop")
-            .titlebar(true)
-            .ui(&mut *root_ui(), |ui| {
-                for i in 0..30 {
-                    Group::new(hash!("shop", i), Vec2::new(300., 80.)).ui(ui, |ui| {
-                        ui.label(Vec2::new(10., 10.), &format!("Item N {i}"));
-                        ui.label(Vec2::new(260., 40.), "10/10");
-                        ui.label(Vec2::new(200., 58.), &format!("{} kr", 800));
-                        if ui.button(Vec2::new(260., 55.), "buy") {
-                            data.inventory.push(format!("Item {i}"));
-                        }
+        root_ui(|ui| {
+            widgets::Window::new(hash!(), vec2(400., 200.), vec2(320., 400.))
+                .label("Shop")
+                .titlebar(true)
+                .ui(ui, |ui| {
+                    for i in 0..30 {
+                        Group::new(hash!("shop", i), Vec2::new(300., 80.)).ui(ui, |ui| {
+                            ui.label(Vec2::new(10., 10.), &format!("Item N {i}"));
+                            ui.label(Vec2::new(260., 40.), "10/10");
+                            ui.label(Vec2::new(200., 58.), &format!("{} kr", 800));
+                            if ui.button(Vec2::new(260., 55.), "buy") {
+                                data.inventory.push(format!("Item {i}"));
+                            }
+                        });
+                    }
+                })
+        });
+
+        root_ui(|ui| {
+            widgets::Window::new(hash!(), vec2(100., 220.), vec2(542., 430.))
+                .label("Fitting window")
+                .titlebar(true)
+                .ui(ui, |ui| {
+                    Group::new(hash!(), Vec2::new(230., 400.)).ui(ui, |ui| {
+                        data.slots(ui);
                     });
-                }
-            });
+                    Group::new(hash!(), Vec2::new(280., 400.)).ui(ui, |ui| {
+                        data.inventory(ui);
+                    });
+                })
+        });
 
-        widgets::Window::new(hash!(), vec2(100., 220.), vec2(542., 430.))
-            .label("Fitting window")
-            .titlebar(true)
-            .ui(&mut *root_ui(), |ui| {
-                Group::new(hash!(), Vec2::new(230., 400.)).ui(ui, |ui| {
-                    data.slots(ui);
-                });
-                Group::new(hash!(), Vec2::new(280., 400.)).ui(ui, |ui| {
-                    data.inventory(ui);
-                });
-            });
+        root_ui(|ui| {
+            widgets::Window::new(hash!(), vec2(470., 50.), vec2(300., 300.))
+                .label("Megaui Showcase Window")
+                .ui(ui, |ui| {
+                    ui.tree_node(hash!(), "input", |ui| {
+                        ui.label(None, "Some random text");
+                        if ui.button(None, "click me") {
+                            println!("hi");
+                        }
 
-        widgets::Window::new(hash!(), vec2(470., 50.), vec2(300., 300.))
-            .label("Megaui Showcase Window")
-            .ui(&mut *root_ui(), |ui| {
-                ui.tree_node(hash!(), "input", |ui| {
-                    ui.label(None, "Some random text");
-                    if ui.button(None, "click me") {
-                        println!("hi");
-                    }
+                        ui.separator();
 
-                    ui.separator();
+                        ui.label(None, "Some other random text");
+                        if ui.button(None, "other button") {
+                            println!("hi2");
+                        }
 
-                    ui.label(None, "Some other random text");
-                    if ui.button(None, "other button") {
-                        println!("hi2");
-                    }
+                        ui.separator();
 
-                    ui.separator();
+                        ui.input_text(hash!(), "<- input text 1", &mut data0);
+                        ui.input_text(hash!(), "<- input text 2", &mut data1);
+                        ui.label(None, &format!("Text entered: \"{data0}\" and \"{data1}\""));
 
-                    ui.input_text(hash!(), "<- input text 1", &mut data0);
-                    ui.input_text(hash!(), "<- input text 2", &mut data1);
-                    ui.label(None, &format!("Text entered: \"{data0}\" and \"{data1}\""));
+                        ui.separator();
+                    });
+                    ui.tree_node(hash!(), "buttons", |ui| {
+                        widgets::Button::new(texture.clone())
+                            .size(vec2(120., 70.))
+                            .ui(ui);
+                        ui.same_line(0.);
+                        widgets::Button::new("Button").size(vec2(120., 70.)).ui(ui);
+                        widgets::Button::new("Button").size(vec2(120., 70.)).ui(ui);
+                        ui.same_line(0.);
+                        widgets::Button::new(texture.clone())
+                            .size(vec2(120., 70.))
+                            .ui(ui);
+                    });
+                    ui.tree_node(hash!(), "sliders and bars", |ui| {
+                        let range0 = -10f32..10f32;
+                        ui.slider(hash!(), "[-10 .. 10]", range0.clone(), &mut number0);
+                        let progress0 = number0.remap(range0.start, range0.end, 0., 1.);
+                        ProgressBar::new().label("first bar").ui(
+                            ui,
+                            progress0,
+                            format!("{:.0}%", progress0 * 100.).as_str(),
+                        );
 
-                    ui.separator();
-                });
-                ui.tree_node(hash!(), "buttons", |ui| {
-                    widgets::Button::new(texture.clone())
-                        .size(vec2(120., 70.))
-                        .ui(ui);
-                    ui.same_line(0.);
-                    widgets::Button::new("Button").size(vec2(120., 70.)).ui(ui);
-                    widgets::Button::new("Button").size(vec2(120., 70.)).ui(ui);
-                    ui.same_line(0.);
-                    widgets::Button::new(texture.clone())
-                        .size(vec2(120., 70.))
-                        .ui(ui);
-                });
-                ui.tree_node(hash!(), "sliders and bars", |ui| {
-                    let range0 = -10f32..10f32;
-                    ui.slider(hash!(), "[-10 .. 10]", range0.clone(), &mut number0);
-                    let progress0 = number0.remap(range0.start, range0.end, 0., 1.);
-                    ProgressBar::new().label("first bar").ui(
-                        ui,
-                        progress0,
-                        format!("{:.0}%", progress0 * 100.).as_str(),
-                    );
+                        let range1 = 0f32..100f32;
+                        ui.slider(hash!(), "[0 .. 100]", range1.clone(), &mut number1);
+                        let progress1 = number1.remap(range1.start, range1.end, 0., 1.);
+                        ProgressBar::new().label("second bar").ui(
+                            ui,
+                            progress1,
+                            format!("{:.1}/{:.0}", number1, range1.end).as_str(),
+                        );
 
-                    let range1 = 0f32..100f32;
-                    ui.slider(hash!(), "[0 .. 100]", range1.clone(), &mut number1);
-                    let progress1 = number1.remap(range1.start, range1.end, 0., 1.);
-                    ProgressBar::new().label("second bar").ui(
-                        ui,
-                        progress1,
-                        format!("{:.1}/{:.0}", number1, range1.end).as_str(),
-                    );
-
-                    let range2 = 0f32..1f32;
-                    Slider::new(hash!(), range2.clone())
-                        .label_width(200.)
-                        .label("slider with a long label")
-                        .ui(ui, &mut number2);
-                    let progress2 = number2;
-                    ProgressBar::new()
-                        .label("bar with a really long label")
-                        .label_width(240.)
-                        .ui(ui, progress2, "");
-                });
-                ui.tree_node(hash!(), "editbox 1", |ui| {
-                    ui.label(None, "This is editbox!");
-                    ui.editbox(hash!(), vec2(285., 165.), &mut text0);
-                });
-                ui.tree_node(hash!(), "editbox 2", |ui| {
-                    ui.label(None, "This is editbox!");
-                    ui.editbox(hash!(), vec2(285., 165.), &mut text1);
-                });
-            });
+                        let range2 = 0f32..1f32;
+                        Slider::new(hash!(), range2.clone())
+                            .label_width(200.)
+                            .label("slider with a long label")
+                            .ui(ui, &mut number2);
+                        let progress2 = number2;
+                        ProgressBar::new()
+                            .label("bar with a really long label")
+                            .label_width(240.)
+                            .ui(ui, progress2, "");
+                    });
+                    ui.tree_node(hash!(), "editbox 1", |ui| {
+                        ui.label(None, "This is editbox!");
+                        ui.editbox(hash!(), vec2(285., 165.), &mut text0);
+                    });
+                    ui.tree_node(hash!(), "editbox 2", |ui| {
+                        ui.label(None, "This is editbox!");
+                        ui.editbox(hash!(), vec2(285., 165.), &mut text1);
+                    });
+                })
+        });
 
         match data.fit_command.take() {
             Some(FittingCommand::Unfit { target_slot }) => data.set_item(target_slot, None),

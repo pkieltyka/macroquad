@@ -72,14 +72,17 @@ async fn main() {
     let ui_texture = Texture2D::from_rgba8(1, 1, &[0, 0, 255, 255]);
     for _ in 0..2 {
         clear_background(BLACK);
-        root_ui().label(Some(vec2(10., 10.)), "UI material regression");
-        root_ui().button(Some(vec2(10., 40.)), "button");
-        root_ui().window(1, vec2(10., 100.), vec2(160., 100.), |ui| {
-            ui.label(None, "window label");
+        root_ui(|ui| ui.label(Some(vec2(10., 10.)), "UI material regression"));
+        root_ui(|ui| ui.button(Some(vec2(10., 40.)), "button"));
+        root_ui(|ui| {
+            ui.window(1, vec2(10., 100.), vec2(160., 100.), |ui| {
+                ui.label(None, "window label");
+            })
         });
-        root_ui()
-            .canvas()
-            .image(Rect::new(200., 10., 32., 32.), &ui_texture);
+        root_ui(|ui| {
+            ui.canvas()
+                .image(Rect::new(200., 10., 32., 32.), &ui_texture)
+        });
         // Filled UI must restore the default after drawing with a custom material.
         gl_use_material(&material);
         next_frame().await;

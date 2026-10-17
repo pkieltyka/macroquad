@@ -92,6 +92,24 @@ WebAudio imports, failed decode, pending cancellation, clone/drop and unclaimed
 result cleanup. Graphics context, UI, telemetry and GPU resource ownership remain
 separate required work; this batch does not close RUSTSEC-2025-0035.
 
+## Image dependency modernization
+
+Upgrade image 0.24.9 to 0.25.10 with default features disabled and PNG/TGA
+retained. Declare the fork's Rust minimum as 1.88 and migrate the removed
+`ImageOutputFormat` test API. The public `ImageFormat` reexport and image error
+payload now use image 0.25 types; consumers using image directly must align
+their types. Codec/export behavior is covered by `tests/image_codecs.rs` and
+the finite native/WASM `image_codec_regression` example/HTML fixture. Existing
+image bounds and graphics transfer regressions remain applicable.
+
+This is a local dependency migration, not an imported community patch.
+[Dependency audit](dependency-audit.md) records primary release sources,
+compatibility/MSRV consequences, target boundaries and remaining decisions.
+Zubspace already depends directly on image 0.25.10; actual graph consolidation
+and release size/startup benefits are verified during fork integration, not
+assumed here. Preserve the vendored Miniquad patch; this change does not
+establish closure of Macroquad or font-parser advisories.
+
 ## Reviewed deferrals and rejections
 
 All candidates below were open and unmerged on 2026-10-16. Their diffs,

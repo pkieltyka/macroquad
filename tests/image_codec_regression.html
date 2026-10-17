@@ -1,0 +1,22 @@
+<!doctype html>
+<canvas id="glcanvas" width="64" height="64" tabindex="1"></canvas>
+<script>
+// Compatibility for the current bundled quad_net registrar.
+var register_plugin;
+window.evidence = { messages: [], errors: [], completed: false };
+for (const type of ["log", "info", "warn", "error"]) {
+    const original = console[type];
+    console[type] = (...args) => {
+        const message = args.join(" ");
+        evidence.messages.push(message);
+        if (message.includes("image codec regression: passed")) evidence.completed = true;
+        original.apply(console, args);
+    };
+}
+window.onerror = message => evidence.errors.push(String(message));
+window.onunhandledrejection = event => evidence.errors.push(String(event.reason));
+</script>
+<script src="/js/mq_js_bundle.js"></script>
+<script>
+load("/target/wasm32-unknown-unknown/debug/examples/image_codec_regression.wasm");
+</script>

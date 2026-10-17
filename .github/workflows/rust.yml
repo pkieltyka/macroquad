@@ -36,6 +36,7 @@ jobs:
         run: cargo +stable build --example audio_lifecycle_regression --target wasm32-unknown-unknown --features audio
       - name: Check lifecycle CPU paths and grouped graphics tests
         run: xvfb-run -a cargo +stable test --tests --no-default-features
+      - run: cargo +stable test --test image_codecs --no-default-features
       - run: xvfb-run -a cargo +stable test --doc --no-default-features
       - name: Validate RGBA transfers and UI shader lifecycle on native GL
         run: |
@@ -46,6 +47,16 @@ jobs:
         run: |
           cargo +stable tree --target x86_64-unknown-linux-gnu --no-default-features
           cargo +stable tree --target wasm32-unknown-unknown --features audio
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the supported minimum compiler
+        run: rustup toolchain install 1.88.0 --profile minimal --target wasm32-unknown-unknown
+      - run: cargo +1.88.0 check --all-targets --no-default-features
+      - run: cargo +1.88.0 check --all-targets --target wasm32-unknown-unknown --features audio
+      - run: cargo +1.88.0 test --test image_codecs --no-default-features
 
   miri:
     runs-on: ubuntu-latest

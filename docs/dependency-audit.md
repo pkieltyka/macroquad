@@ -1,15 +1,16 @@
 # Dependency audit and upgrade queue
 
-Reviewed 2026-10-16. This records upgrade work, not completed upgrades.
+Reviewed 2026-10-16. The initial audit below records the versions before the
+image upgrade; its implementation and remaining validation are recorded last.
 Scope: root and retained auxiliary manifests, root and Zubspace lockfiles,
 and `cargo tree --locked --offline -e normal` for Linux native/no-audio,
 WASM/audio and optional Linux native/audio. Latest stable versions and declared
 Rust requirements were checked against the linked crates.io API records;
 compatibility notes come from upstream sources. `cargo-outdated` and
 `cargo-audit` were unavailable and were not installed. No dependency was changed
-for this audit.
+for the initial audit.
 
-## Direct dependencies
+## Direct dependencies at the initial audit
 
 All resolved versions below are already the latest allowed by their current
 requirements. A lockfile refresh alone cannot adopt the newer version families.
@@ -116,3 +117,53 @@ WASM/audio, optional native-audio compatibility, public API regressions, and
 Zubspace's resolved duplication. Preserve the vendored Miniquad fix. Review and
 commit each coherent batch before the next upgrade; keep an evidence-backed
 decision for candidates that remain deferred.
+
+## Image upgrade implementation
+
+The fork now requires image `0.25.10`, with defaults disabled and only PNG/TGA
+enabled, and declares Rust **1.88** as its minimum. The isolated resolved graph
+contains image 0.25.10 and PNG 0.18.1, plus moxcms 0.8.1/pxfm 0.1.30; the
+miniz_oxide 0.8.9/0.9.1 split remains. The root lockfile is intentionally
+untracked; consuming applications must resolve and pin their own graph. Exact
+Zubspace image/PNG consolidation and packaged size/startup measurements remain
+part of fork integration, with no performance claim from this batch.
+
+The removed `ImageOutputFormat` test API is migrated to `ImageFormat`.
+Macroquad's public image-format parameters/reexport and `Error::ImageError`
+now refer to image 0.25 types: callers that separately depend on image 0.24
+must migrate those types together. PNG/TGA decoding and native PNG export keep
+their existing contract, including export's row flip. Filesystem PNG export
+remains unsupported on WASM; the browser fixture exercises in-memory PNG
+encoding and both supported decoders instead.
+
+Regression entry points are `cargo test --test image_codecs`, the existing
+image-dimension library tests and GPU transfer example, and
+`examples/image_codec_regression.rs` with `tests/image_codec_regression.html`.
+The new tests cover known pixel channels/alpha, top-left TGA orientation,
+inferred/explicit PNG format, truncated/invalid/wrong-format rejection and
+native export round trips. Actual Rust 1.88.0 checks cover all targets under
+native/no-audio, native/audio and WASM/audio, and the new native codec tests pass
+with that compiler. Its WASM/audio fixture also passes in Chrome and Firefox.
+CI retains native/no-audio and WASM/audio minimum-compiler checks alongside
+stable-toolchain coverage.
+
+Decisions for the current Zubspace integration:
+
+- Defer glam's breaking migration: the current graph has one version, scalar
+  math remains intentional, and no measured browser benefit offsets the camera,
+  public-type and uniform compatibility work. Revisit for a concrete math defect
+  or a demonstrated performance need.
+- Defer nanoserde's auxiliary migration: Zubspace uses neither auxiliary crate,
+  and no failing supported JSON case was identified. Keep 0.1.37 rather than
+  undertake parser/derive changes solely for a newer version number; revisit for
+  an auxiliary-format defect or a supported consumer's requirement.
+- Retain fontdue's current parser/API for this integration and record the
+  unmaintained advisory as outstanding. Latest fontdue offers no maintained
+  parser upgrade, while replacing its parser/backend requires separate font
+  metrics, custom-font and rendering compatibility work. Revisit an upstream
+  maintained-parser release or a dedicated backend migration; bitmap gameplay
+  and a shipped default font do not resolve the advisory. No capability is
+  removed or advisory suppressed by this decision.
+
+Final accumulated-code and Zubspace graph/advisory re-audits remain pending;
+these dependency decisions do not establish security or release acceptance.

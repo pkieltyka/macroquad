@@ -3,6 +3,7 @@ name = "macroquad"
 version = "0.4.16"
 authors = ["not-fl3 <not.fl3@gmail.com>"]
 edition = "2021"
+rust-version = "1.88"
 homepage = "https://github.com/not-fl3/macroquad"
 repository = "https://github.com/not-fl3/macroquad"
 description = """
@@ -30,7 +31,7 @@ all-features = true
 miniquad = { version = "=0.4.11", path = "vendor/miniquad", features = ["log-impl"] }
 quad-rand = "0.2.3"
 glam = { version = "0.27", features = ["scalar-math"] }
-image = { version = "0.24", default-features = false, features = ["png", "tga"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "tga"] }
 macroquad_macro = { version = "0.1.8", path = "macroquad_macro" }
 fontdue = "0.9"
 backtrace = { version = "0.3.60", optional = true }

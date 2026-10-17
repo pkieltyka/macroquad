@@ -1117,7 +1117,7 @@ mod tests {
     fn decoded_dimensions_are_not_truncated() {
         let mut encoded = std::io::Cursor::new(Vec::new());
         image::DynamicImage::new_rgba8(65536, 1)
-            .write_to(&mut encoded, image::ImageOutputFormat::Png)
+            .write_to(&mut encoded, image::ImageFormat::Png)
             .unwrap();
         assert!(Image::from_file_with_format(encoded.get_ref(), None).is_err());
     }
